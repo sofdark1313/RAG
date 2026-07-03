@@ -11,7 +11,7 @@
 
 ## 包含组件
 
-### Milvus (`milvus-stack-2.6.6.compose.yaml`)
+### Milvus (`milvus-lightweight-2.6.6.compose.yaml`)
 
 | 容器 | 内存上限 | 说明 |
 |------|---------|------|
@@ -20,14 +20,14 @@
 | rustfs | 256 MB | 对象存储，IO 密集非内存密集 |
 | attu | 256 MB | Web 管理界面 |
 
-### Milvus 降级版 (`milvus-stack-2.5.8.compose.yaml`)
+### Milvus 降级版 (`milvus-lightweight-2.5.8.compose.yaml`)
 
 部分 CentOS 版本（如内核较旧的 CentOS 7）不支持 Milvus 2.6.6，启动时可能出现兼容性错误。此文件提供 Milvus 2.5.8 降级方案，组件和配置与 2.6.6 版本一致，仅将 Milvus 镜像降级为 `milvusdb/milvus:v2.5.8`，Attu 对应降级为 `zilliz/attu:v2.4.12`。
 
 如果使用 2.6.6 版本无法正常启动，请切换到此文件：
 
 ```bash
-docker compose -f milvus-stack-2.5.8.compose.yaml up -d
+docker compose -f milvus-lightweight-2.5.8.compose.yaml up -d
 ```
 
 ## 注意事项

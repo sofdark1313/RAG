@@ -1,4 +1,4 @@
-name: milvus-stack
+name: milvus-lightweight
 
 services:
   rustfs:

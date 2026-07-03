@@ -1,4 +1,4 @@
-name: rocketmq-stack
+name: rocketmq
 
 services:
   rmqnamesrv:

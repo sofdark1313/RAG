@@ -244,7 +244,7 @@
                     <java>
                         <licenseHeader>
                             <!-- ${maven.multiModuleProjectDirectory} 爆红属于正常，并不影响编译或者运行，忽略就好 -->
-                            <file>${maven.multiModuleProjectDirectory}/resources/format/copyright.txt</file>
+                            <file>${maven.multiModuleProjectDirectory}/config/spotless/license-header.txt</file>
                         </licenseHeader>
                     </java>
                 </configuration>
