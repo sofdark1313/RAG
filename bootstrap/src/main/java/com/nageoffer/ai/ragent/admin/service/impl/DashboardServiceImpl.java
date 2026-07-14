@@ -27,6 +27,7 @@ import com.nageoffer.ai.ragent.admin.controller.vo.DashboardTrendPointVO;
 import com.nageoffer.ai.ragent.admin.controller.vo.DashboardTrendSeriesVO;
 import com.nageoffer.ai.ragent.admin.controller.vo.DashboardTrendsVO;
 import com.nageoffer.ai.ragent.admin.service.DashboardService;
+import com.nageoffer.ai.ragent.framework.exception.ClientException;
 import com.nageoffer.ai.ragent.rag.dao.entity.ConversationDO;
 import com.nageoffer.ai.ragent.rag.dao.entity.ConversationMessageDO;
 import com.nageoffer.ai.ragent.rag.dao.entity.RagTraceRunDO;
@@ -62,6 +63,13 @@ public class DashboardServiceImpl implements DashboardService {
     private static final String NO_DOC_REPLY = "未检索到与问题相关的文档内容。";
     private static final String GRANULARITY_DAY = "day";
     private static final String GRANULARITY_HOUR = "hour";
+    private static final String METRIC_SESSIONS = "sessions";
+    private static final String METRIC_MESSAGES = "messages";
+    private static final String METRIC_ACTIVE_USERS = "activeusers";
+    private static final String METRIC_AVG_LATENCY = "avglatency";
+    private static final String METRIC_QUALITY = "quality";
+    private static final int MAX_WINDOW_TEXT_LENGTH = 16;
+    private static final long MAX_WINDOW_HOURS = 24L * 90;
     private static final long SLOW_LATENCY_THRESHOLD_MS = 20000L;
     private static final DateTimeFormatter HOUR_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd HH:mm:ss");
 
@@ -137,7 +145,7 @@ public class DashboardServiceImpl implements DashboardService {
 
     @Override
     public DashboardTrendsVO loadTrends(String metric, String window, String granularity) {
-        String normalizedMetric = metric == null ? "" : metric.trim().toLowerCase();
+        String normalizedMetric = normalizeMetric(metric);
         Duration windowDuration = parseWindow(window, Duration.ofDays(7));
         WindowRange range = resolveWindowRange(window, Duration.ofDays(7));
         String resolvedGranularity = resolveTrendGranularity(granularity, windowDuration);
@@ -150,31 +158,31 @@ public class DashboardServiceImpl implements DashboardService {
                     .plusHours(1);
             LocalDateTime startHour = endHourExclusive.minusHours(Math.max(1, windowDuration.toHours()));
 
-            if ("sessions".equals(normalizedMetric)) {
+            if (METRIC_SESSIONS.equals(normalizedMetric)) {
                 Map<LocalDateTime, Long> counts = countConversationsByHour(startHour, endHourExclusive, zoneId);
                 series.add(DashboardTrendSeriesVO.builder()
                         .name("会话数")
                         .data(buildPointsByHour(startHour, endHourExclusive, zoneId, counts))
                         .build());
-            } else if ("messages".equals(normalizedMetric)) {
+            } else if (METRIC_MESSAGES.equals(normalizedMetric)) {
                 Map<LocalDateTime, Long> counts = countMessagesByHour(startHour, endHourExclusive, zoneId);
                 series.add(DashboardTrendSeriesVO.builder()
                         .name("消息数")
                         .data(buildPointsByHour(startHour, endHourExclusive, zoneId, counts))
                         .build());
-            } else if ("activeusers".equals(normalizedMetric)) {
+            } else if (METRIC_ACTIVE_USERS.equals(normalizedMetric)) {
                 Map<LocalDateTime, Long> counts = countActiveUsersByHour(startHour, endHourExclusive, zoneId);
                 series.add(DashboardTrendSeriesVO.builder()
                         .name("活跃用户")
                         .data(buildPointsByHour(startHour, endHourExclusive, zoneId, counts))
                         .build());
-            } else if ("avglatency".equals(normalizedMetric)) {
+            } else if (METRIC_AVG_LATENCY.equals(normalizedMetric)) {
                 Map<LocalDateTime, Double> averages = averageLatencyByHour(startHour, endHourExclusive, zoneId);
                 series.add(DashboardTrendSeriesVO.builder()
                         .name("平均响应时间")
                         .data(buildPointsDoubleByHour(startHour, endHourExclusive, zoneId, averages))
                         .build());
-            } else if ("quality".equals(normalizedMetric)) {
+            } else if (METRIC_QUALITY.equals(normalizedMetric)) {
                 Map<LocalDateTime, Long> successMap = countTraceRunsByHour(startHour, endHourExclusive, zoneId, STATUS_SUCCESS);
                 Map<LocalDateTime, Long> errorMap = countTraceRunsByHour(startHour, endHourExclusive, zoneId, STATUS_ERROR);
                 Map<LocalDateTime, Long> assistantCountMap = countAssistantMessagesByHour(startHour, endHourExclusive, zoneId);
@@ -204,31 +212,31 @@ public class DashboardServiceImpl implements DashboardService {
             LocalDate startDay = toLocalDate(range.start, zoneId);
             LocalDate endExclusiveDay = toLocalDate(range.end, zoneId).plusDays(1);
 
-            if ("sessions".equals(normalizedMetric)) {
+            if (METRIC_SESSIONS.equals(normalizedMetric)) {
                 Map<LocalDate, Long> counts = countConversationsByDay(startDay, endExclusiveDay, zoneId);
                 series.add(DashboardTrendSeriesVO.builder()
                         .name("会话数")
                         .data(buildPoints(startDay, endExclusiveDay, zoneId, counts))
                         .build());
-            } else if ("messages".equals(normalizedMetric)) {
+            } else if (METRIC_MESSAGES.equals(normalizedMetric)) {
                 Map<LocalDate, Long> counts = countMessagesByDay(startDay, endExclusiveDay, zoneId);
                 series.add(DashboardTrendSeriesVO.builder()
                         .name("消息数")
                         .data(buildPoints(startDay, endExclusiveDay, zoneId, counts))
                         .build());
-            } else if ("activeusers".equals(normalizedMetric)) {
+            } else if (METRIC_ACTIVE_USERS.equals(normalizedMetric)) {
                 Map<LocalDate, Long> counts = countActiveUsersByDay(startDay, endExclusiveDay, zoneId);
                 series.add(DashboardTrendSeriesVO.builder()
                         .name("活跃用户")
                         .data(buildPoints(startDay, endExclusiveDay, zoneId, counts))
                         .build());
-            } else if ("avglatency".equals(normalizedMetric)) {
+            } else if (METRIC_AVG_LATENCY.equals(normalizedMetric)) {
                 Map<LocalDate, Double> averages = averageLatencyByDay(startDay, endExclusiveDay, zoneId);
                 series.add(DashboardTrendSeriesVO.builder()
                         .name("平均响应时间")
                         .data(buildPointsDouble(startDay, endExclusiveDay, zoneId, averages))
                         .build());
-            } else if ("quality".equals(normalizedMetric)) {
+            } else if (METRIC_QUALITY.equals(normalizedMetric)) {
                 Map<LocalDate, Long> successMap = countTraceRunsByDay(startDay, endExclusiveDay, zoneId, STATUS_SUCCESS);
                 Map<LocalDate, Long> errorMap = countTraceRunsByDay(startDay, endExclusiveDay, zoneId, STATUS_ERROR);
                 Map<LocalDate, Long> assistantCountMap = countAssistantMessagesByDay(startDay, endExclusiveDay, zoneId);
@@ -257,7 +265,7 @@ public class DashboardServiceImpl implements DashboardService {
         }
 
         return DashboardTrendsVO.builder()
-                .metric(metric)
+                .metric(normalizedMetric)
                 .window(range.windowLabel)
                 .granularity(resolvedGranularity)
                 .series(series)
@@ -710,8 +718,9 @@ public class DashboardServiceImpl implements DashboardService {
         Instant now = Instant.now();
         Instant start = now.minus(duration);
         Instant prevStart = start.minus(duration);
+        String windowLabel = formatDuration(duration);
         return new WindowRange(Date.from(start), Date.from(now), Date.from(prevStart), Date.from(start),
-                window == null ? formatDuration(fallback) : window, "prev_" + (window == null ? formatDuration(fallback) : window));
+                windowLabel, "prev_" + windowLabel);
     }
 
     private Duration parseWindow(String window, Duration fallback) {
@@ -719,15 +728,24 @@ public class DashboardServiceImpl implements DashboardService {
             return fallback;
         }
         String normalized = window.trim().toLowerCase();
+        if (normalized.length() > MAX_WINDOW_TEXT_LENGTH) {
+            throw new ClientException("时间窗口长度不合法");
+        }
         if (normalized.endsWith("h")) {
-            long hours = parseNumber(normalized.substring(0, normalized.length() - 1), fallback.toHours());
+            long hours = parseWindowNumber(normalized.substring(0, normalized.length() - 1));
+            if (hours > MAX_WINDOW_HOURS) {
+                throw new ClientException("时间窗口不能超过90天");
+            }
             return Duration.ofHours(hours);
         }
         if (normalized.endsWith("d")) {
-            long days = parseNumber(normalized.substring(0, normalized.length() - 1), fallback.toDays());
+            long days = parseWindowNumber(normalized.substring(0, normalized.length() - 1));
+            if (days > MAX_WINDOW_HOURS / 24) {
+                throw new ClientException("时间窗口不能超过90天");
+            }
             return Duration.ofDays(days);
         }
-        return fallback;
+        throw new ClientException("时间窗口格式不合法");
     }
 
     private String resolveTrendGranularity(String granularity, Duration windowDuration) {
@@ -736,16 +754,34 @@ public class DashboardServiceImpl implements DashboardService {
             if (GRANULARITY_HOUR.equals(normalized) || GRANULARITY_DAY.equals(normalized)) {
                 return normalized;
             }
+            throw new ClientException("趋势粒度不合法");
         }
         return windowDuration.toHours() <= 48 ? GRANULARITY_HOUR : GRANULARITY_DAY;
     }
 
-    private long parseNumber(String value, long fallback) {
+    private long parseWindowNumber(String value) {
         try {
-            return Long.parseLong(value);
+            long number = Long.parseLong(value);
+            if (number <= 0) {
+                throw new ClientException("时间窗口必须大于0");
+            }
+            return number;
         } catch (NumberFormatException ex) {
-            return fallback;
+            throw new ClientException("时间窗口格式不合法");
         }
+    }
+
+    private String normalizeMetric(String metric) {
+        if (metric == null || metric.isBlank()) {
+            throw new ClientException("趋势指标不能为空");
+        }
+        String normalized = metric.trim().toLowerCase();
+        if (METRIC_SESSIONS.equals(normalized) || METRIC_MESSAGES.equals(normalized)
+                || METRIC_ACTIVE_USERS.equals(normalized) || METRIC_AVG_LATENCY.equals(normalized)
+                || METRIC_QUALITY.equals(normalized)) {
+            return normalized;
+        }
+        throw new ClientException("趋势指标不合法");
     }
 
     private String formatDuration(Duration duration) {

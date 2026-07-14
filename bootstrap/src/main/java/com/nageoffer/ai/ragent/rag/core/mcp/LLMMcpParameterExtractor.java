@@ -93,7 +93,7 @@ public class LLMMcpParameterExtractor implements McpParameterExtractor {
                     .thinking(false)
                     .build();
             raw = llmService.chat(request);
-            log.info("MCP 参数提取 LLM 响应: {}", raw);
+            log.info("MCP 参数提取 LLM 响应: rawLength={}", lengthOf(raw));
 
             // 解析 JSON 响应
             Map<String, Object> extracted = parseJsonResponse(raw, tool);
@@ -101,12 +101,12 @@ public class LLMMcpParameterExtractor implements McpParameterExtractor {
             // 填充默认值
             fillDefaults(extracted, tool);
 
-            log.info("MCP 参数提取完成, toolId: {}, 使用自定义提示词: {}, 参数: {}",
-                    tool.name(), StrUtil.isNotBlank(customPromptTemplate), extracted);
+            log.info("MCP 参数提取完成, toolId: {}, 使用自定义提示词: {}, paramKeys={}, paramCount={}",
+                    tool.name(), StrUtil.isNotBlank(customPromptTemplate), extracted.keySet(), extracted.size());
 
             return extracted;
         } catch (JsonSyntaxException e) {
-            log.warn("MCP 参数提取-JSON解析失败, toolId: {}, 响应: {}", tool.name(), raw, e);
+            log.warn("MCP 参数提取-JSON解析失败, toolId: {}, rawLength={}", tool.name(), lengthOf(raw), e);
             return buildDefaultParameters(tool);
         } catch (Exception e) {
             log.error("MCP 参数提取异常, toolId: {}", tool.name(), e);
@@ -176,7 +176,7 @@ public class LLMMcpParameterExtractor implements McpParameterExtractor {
         String cleaned = LLMResponseCleaner.stripMarkdownCodeFence(raw);
         JsonElement element = JsonParser.parseString(cleaned);
         if (!element.isJsonObject()) {
-            log.warn("LLM 返回的不是 JSON 对象: {}", raw);
+            log.warn("LLM 返回的不是 JSON 对象: rawLength={}", lengthOf(raw));
             return new HashMap<>();
         }
         JsonObject obj = element.getAsJsonObject();
@@ -248,5 +248,9 @@ public class LLMMcpParameterExtractor implements McpParameterExtractor {
                 params.put(paramName, defaultValue);
             }
         }
+    }
+
+    private int lengthOf(String text) {
+        return text == null ? 0 : text.length();
     }
 }

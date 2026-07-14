@@ -19,6 +19,7 @@ package com.nageoffer.ai.ragent.ingestion.service.impl;
 
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.lang.Assert;
+import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -35,6 +36,7 @@ import com.nageoffer.ai.ragent.ingestion.dao.mapper.IngestionPipelineMapper;
 import com.nageoffer.ai.ragent.ingestion.dao.mapper.IngestionPipelineNodeMapper;
 import com.nageoffer.ai.ragent.framework.context.UserContext;
 import com.nageoffer.ai.ragent.framework.exception.ClientException;
+import com.nageoffer.ai.ragent.framework.web.PageRequests;
 import com.nageoffer.ai.ragent.ingestion.domain.enums.IngestionNodeType;
 import com.nageoffer.ai.ragent.ingestion.domain.pipeline.NodeConfig;
 import com.nageoffer.ai.ragent.ingestion.domain.pipeline.PipelineDefinition;
@@ -54,6 +56,14 @@ import java.util.List;
 @RequiredArgsConstructor
 public class IngestionPipelineServiceImpl implements IngestionPipelineService {
 
+    private static final int MAX_NAME_LENGTH = 100;
+    private static final int MAX_DESCRIPTION_LENGTH = 2000;
+    private static final int MAX_NODE_COUNT = 50;
+    private static final int MAX_ID_LENGTH = 20;
+    private static final int MAX_NODE_ID_LENGTH = 20;
+    private static final int MAX_NODE_TYPE_LENGTH = 16;
+    private static final int MAX_NODE_JSON_LENGTH = 20_000;
+
     private final IngestionPipelineMapper pipelineMapper;
     private final IngestionPipelineNodeMapper nodeMapper;
     private final ObjectMapper objectMapper;
@@ -63,8 +73,8 @@ public class IngestionPipelineServiceImpl implements IngestionPipelineService {
     public IngestionPipelineVO create(IngestionPipelineCreateRequest request) {
         Assert.notNull(request, () -> new ClientException("请求不能为空"));
         IngestionPipelineDO pipeline = IngestionPipelineDO.builder()
-                .name(request.getName())
-                .description(request.getDescription())
+                .name(normalizeRequiredText(request.getName(), MAX_NAME_LENGTH, "流水线名称"))
+                .description(normalizeOptionalText(request.getDescription(), MAX_DESCRIPTION_LENGTH, "流水线描述"))
                 .createdBy(UserContext.getUsername())
                 .updatedBy(UserContext.getUsername())
                 .build();
@@ -80,14 +90,16 @@ public class IngestionPipelineServiceImpl implements IngestionPipelineService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public IngestionPipelineVO update(String pipelineId, IngestionPipelineUpdateRequest request) {
-        IngestionPipelineDO pipeline = pipelineMapper.selectById(pipelineId);
+        Assert.notNull(request, () -> new ClientException("请求不能为空"));
+        String normalizedPipelineId = normalizeRequiredId(pipelineId, "流水线ID");
+        IngestionPipelineDO pipeline = pipelineMapper.selectById(normalizedPipelineId);
         Assert.notNull(pipeline, () -> new ClientException("未找到流水线"));
 
         if (StringUtils.hasText(request.getName())) {
-            pipeline.setName(request.getName());
+            pipeline.setName(normalizeRequiredText(request.getName(), MAX_NAME_LENGTH, "流水线名称"));
         }
         if (request.getDescription() != null) {
-            pipeline.setDescription(request.getDescription());
+            pipeline.setDescription(normalizeOptionalText(request.getDescription(), MAX_DESCRIPTION_LENGTH, "流水线描述"));
         }
         pipeline.setUpdatedBy(UserContext.getUsername());
         pipelineMapper.updateById(pipeline);
@@ -100,17 +112,19 @@ public class IngestionPipelineServiceImpl implements IngestionPipelineService {
 
     @Override
     public IngestionPipelineVO get(String pipelineId) {
-        IngestionPipelineDO pipeline = pipelineMapper.selectById(pipelineId);
+        String normalizedPipelineId = normalizeRequiredId(pipelineId, "流水线ID");
+        IngestionPipelineDO pipeline = pipelineMapper.selectById(normalizedPipelineId);
         Assert.notNull(pipeline, () -> new ClientException("未找到流水线"));
         return toVO(pipeline, fetchNodes(pipeline.getId()));
     }
 
     @Override
     public IPage<IngestionPipelineVO> page(Page<IngestionPipelineVO> page, String keyword) {
-        Page<IngestionPipelineDO> mpPage = new Page<>(page.getCurrent(), page.getSize());
+        Page<IngestionPipelineDO> mpPage = PageRequests.from(page);
+        String normalizedKeyword = normalizeOptionalText(keyword, MAX_NAME_LENGTH, "关键词");
         LambdaQueryWrapper<IngestionPipelineDO> qw = new LambdaQueryWrapper<IngestionPipelineDO>()
                 .eq(IngestionPipelineDO::getDeleted, 0)
-                .like(StringUtils.hasText(keyword), IngestionPipelineDO::getName, keyword)
+                .like(StringUtils.hasText(normalizedKeyword), IngestionPipelineDO::getName, normalizedKeyword)
                 .orderByDesc(IngestionPipelineDO::getUpdateTime);
         IPage<IngestionPipelineDO> result = pipelineMapper.selectPage(mpPage, qw);
         Page<IngestionPipelineVO> voPage = new Page<>(result.getCurrent(), result.getSize(), result.getTotal());
@@ -123,7 +137,8 @@ public class IngestionPipelineServiceImpl implements IngestionPipelineService {
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void delete(String pipelineId) {
-        IngestionPipelineDO pipeline = pipelineMapper.selectById(pipelineId);
+        String normalizedPipelineId = normalizeRequiredId(pipelineId, "流水线ID");
+        IngestionPipelineDO pipeline = pipelineMapper.selectById(normalizedPipelineId);
         Assert.notNull(pipeline, () -> new ClientException("未找到流水线"));
         pipeline.setDeleted(1);
         pipeline.setUpdatedBy(UserContext.getUsername());
@@ -136,7 +151,8 @@ public class IngestionPipelineServiceImpl implements IngestionPipelineService {
 
     @Override
     public PipelineDefinition getDefinition(String pipelineId) {
-        IngestionPipelineDO pipeline = pipelineMapper.selectById(pipelineId);
+        String normalizedPipelineId = normalizeRequiredId(pipelineId, "流水线ID");
+        IngestionPipelineDO pipeline = pipelineMapper.selectById(normalizedPipelineId);
         Assert.notNull(pipeline, () -> new ClientException("未找到流水线"));
 
         List<NodeConfig> nodes = fetchNodes(pipeline.getId()).stream()
@@ -150,22 +166,25 @@ public class IngestionPipelineServiceImpl implements IngestionPipelineService {
                 .build();
     }
 
-    private void upsertNodes(String pipelineId, List<IngestionPipelineNodeRequest> nodes) {
+    private void upsertNodes(String normalizedPipelineId, List<IngestionPipelineNodeRequest> nodes) {
         if (nodes == null) {
             return;
         }
+        if (nodes.size() > MAX_NODE_COUNT) {
+            throw new ClientException("流水线节点数量不能超过" + MAX_NODE_COUNT + "个");
+        }
         LambdaQueryWrapper<IngestionPipelineNodeDO> qw = new LambdaQueryWrapper<IngestionPipelineNodeDO>()
-                .eq(IngestionPipelineNodeDO::getPipelineId, pipelineId);
+                .eq(IngestionPipelineNodeDO::getPipelineId, normalizedPipelineId);
         nodeMapper.delete(qw);
         for (IngestionPipelineNodeRequest node : nodes) {
             if (node == null) {
                 continue;
             }
             IngestionPipelineNodeDO entity = IngestionPipelineNodeDO.builder()
-                    .pipelineId(pipelineId)
-                    .nodeId(node.getNodeId())
+                    .pipelineId(normalizedPipelineId)
+                    .nodeId(normalizeRequiredText(node.getNodeId(), MAX_NODE_ID_LENGTH, "节点ID"))
                     .nodeType(normalizeNodeType(node.getNodeType()))
-                    .nextNodeId(node.getNextNodeId())
+                    .nextNodeId(normalizeOptionalText(node.getNextNodeId(), MAX_NODE_ID_LENGTH, "下一节点ID"))
                     .settingsJson(toJson(node.getSettings()))
                     .conditionJson(toJson(node.getCondition()))
                     .createdBy(UserContext.getUsername())
@@ -175,9 +194,9 @@ public class IngestionPipelineServiceImpl implements IngestionPipelineService {
         }
     }
 
-    private List<IngestionPipelineNodeDO> fetchNodes(String pipelineId) {
+    private List<IngestionPipelineNodeDO> fetchNodes(String normalizedPipelineId) {
         LambdaQueryWrapper<IngestionPipelineNodeDO> qw = new LambdaQueryWrapper<IngestionPipelineNodeDO>()
-                .eq(IngestionPipelineNodeDO::getPipelineId, pipelineId)
+                .eq(IngestionPipelineNodeDO::getPipelineId, normalizedPipelineId)
                 .eq(IngestionPipelineNodeDO::getDeleted, 0);
         return nodeMapper.selectList(qw);
     }
@@ -210,7 +229,11 @@ public class IngestionPipelineServiceImpl implements IngestionPipelineService {
         if (node == null || node.isNull()) {
             return null;
         }
-        return node.toString();
+        String json = node.toString();
+        if (json.length() > MAX_NODE_JSON_LENGTH) {
+            throw new ClientException("节点配置 JSON 长度不能超过" + MAX_NODE_JSON_LENGTH + "个字符");
+        }
+        return json;
     }
 
     private JsonNode parseJson(String raw) {
@@ -225,13 +248,11 @@ public class IngestionPipelineServiceImpl implements IngestionPipelineService {
     }
 
     private String normalizeNodeType(String nodeType) {
-        if (!StringUtils.hasText(nodeType)) {
-            return nodeType;
-        }
+        String actualNodeType = normalizeRequiredText(nodeType, MAX_NODE_TYPE_LENGTH, "节点类型");
         try {
-            return IngestionNodeType.fromValue(nodeType).getValue();
+            return IngestionNodeType.fromValue(actualNodeType).getValue();
         } catch (IllegalArgumentException ex) {
-            throw new ClientException("未知节点类型: " + nodeType);
+            throw new ClientException("未知节点类型: " + actualNodeType);
         }
     }
 
@@ -244,5 +265,30 @@ public class IngestionPipelineServiceImpl implements IngestionPipelineService {
         } catch (IllegalArgumentException ex) {
             return nodeType;
         }
+    }
+
+    private String normalizeRequiredText(String value, int maxLength, String fieldName) {
+        String text = StrUtil.trimToNull(value);
+        Assert.notBlank(text, () -> new ClientException(fieldName + "不能为空"));
+        if (text.length() > maxLength) {
+            throw new ClientException(fieldName + "长度不能超过" + maxLength + "个字符");
+        }
+        return text;
+    }
+
+    private String normalizeOptionalText(String value, int maxLength, String fieldName) {
+        String text = StrUtil.trimToNull(value);
+        if (text != null && text.length() > maxLength) {
+            throw new ClientException(fieldName + "长度不能超过" + maxLength + "个字符");
+        }
+        return text;
+    }
+
+    private String normalizeRequiredId(String value, String fieldName) {
+        String text = normalizeRequiredText(value, MAX_ID_LENGTH, fieldName);
+        if (!text.matches("\\d{1,20}")) {
+            throw new ClientException(fieldName + "不合法");
+        }
+        return text;
     }
 }

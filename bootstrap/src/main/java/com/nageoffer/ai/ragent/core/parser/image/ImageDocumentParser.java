@@ -35,7 +35,14 @@ import org.springframework.beans.factory.annotation.Value;
 import org.springframework.core.Ordered;
 import org.springframework.core.annotation.Order;
 import org.springframework.stereotype.Component;
+import org.w3c.dom.Document;
+import org.w3c.dom.Element;
+import org.w3c.dom.NamedNodeMap;
+import org.w3c.dom.Node;
+import org.w3c.dom.NodeList;
 
+import javax.xml.XMLConstants;
+import javax.xml.parsers.DocumentBuilderFactory;
 import java.awt.Color;
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -64,6 +71,8 @@ import java.util.UUID;
 @Component
 @Order(Ordered.HIGHEST_PRECEDENCE + 30)
 public class ImageDocumentParser implements DocumentParser {
+
+    private static final int MAX_SVG_BYTES = 5 * 1024 * 1024;
 
     public static final String OPT_SOURCE_FILE = "sourceFile";
     public static final String OPT_DOCUMENT_ID = "documentId";
@@ -121,7 +130,7 @@ public class ImageDocumentParser implements DocumentParser {
         description = description == null ? "" : description.strip();
         // 空描述等同失败：放过去只会产出「有图无描述」的纯链接 chunk，永远召回不到，故直接抛错暴露问题
         if (description.isBlank()) {
-            throw new ServiceException("VLM 返回空描述，无法生成可检索文本：file=" + sourceFile);
+            throw new ServiceException("VLM 返回空描述，无法生成可检索文本，fileNameLength=" + lengthOf(sourceFile));
         }
 
         // 2. 原图上传 asset-bucket（public-read），拿匿名可达的公网 URL
@@ -137,7 +146,8 @@ public class ImageDocumentParser implements DocumentParser {
         ImageBlock block = new ImageBlock(blockId, Provenance.ofFile(sourceFile), List.of(),
                 asset, caption, caption, description);
 
-        log.info("图片图生文完成: file={}, descChars={}, url={}", sourceFile, description.length(), publicUrl);
+        log.info("图片图生文完成: fileNameLength={}, descChars={}, urlLength={}",
+                lengthOf(sourceFile), description.length(), lengthOf(publicUrl));
         return ParsedDocument.of(List.of(block), Map.of(
                 "parser", getParserType(),
                 "mimeType", mimeType == null ? "" : mimeType,
@@ -162,6 +172,7 @@ public class ImageDocumentParser implements DocumentParser {
      */
     private static byte[] rasterizeSvg(byte[] svg) {
         try {
+            validateSvg(svg);
             PNGTranscoder transcoder = new PNGTranscoder();
             transcoder.addTranscodingHint(PNGTranscoder.KEY_MAX_WIDTH, 1600f);
             transcoder.addTranscodingHint(PNGTranscoder.KEY_BACKGROUND_COLOR, Color.WHITE);
@@ -171,6 +182,122 @@ public class ImageDocumentParser implements DocumentParser {
         } catch (Exception e) {
             throw new ServiceException("SVG 栅格化失败：" + e.getMessage());
         }
+    }
+
+    private static void validateSvg(byte[] svg) {
+        if (svg.length > MAX_SVG_BYTES) {
+            throw new ServiceException("SVG 文件过大，无法安全解析");
+        }
+        try {
+            DocumentBuilderFactory factory = DocumentBuilderFactory.newInstance();
+            factory.setNamespaceAware(true);
+            factory.setXIncludeAware(false);
+            factory.setExpandEntityReferences(false);
+            setXmlFeature(factory, "http://apache.org/xml/features/disallow-doctype-decl", true);
+            setXmlFeature(factory, "http://xml.org/sax/features/external-general-entities", false);
+            setXmlFeature(factory, "http://xml.org/sax/features/external-parameter-entities", false);
+            setXmlFeature(factory, "http://apache.org/xml/features/nonvalidating/load-external-dtd", false);
+            factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_DTD, "");
+            factory.setAttribute(XMLConstants.ACCESS_EXTERNAL_SCHEMA, "");
+
+            Document document = factory.newDocumentBuilder().parse(new ByteArrayInputStream(svg));
+            Element root = document.getDocumentElement();
+            if (root == null || !"svg".equalsIgnoreCase(localName(root))) {
+                throw new ServiceException("SVG 根节点不合法");
+            }
+            rejectActiveSvgContent(document);
+        } catch (ServiceException e) {
+            throw e;
+        } catch (Exception e) {
+            throw new ServiceException("SVG 安全校验失败：" + e.getMessage());
+        }
+    }
+
+    private static void setXmlFeature(DocumentBuilderFactory factory, String feature, boolean value) throws Exception {
+        factory.setFeature(feature, value);
+    }
+
+    private static void rejectActiveSvgContent(Document document) {
+        NodeList nodes = document.getElementsByTagName("*");
+        for (int i = 0; i < nodes.getLength(); i++) {
+            Node node = nodes.item(i);
+            if (!(node instanceof Element element)) {
+                continue;
+            }
+            String tagName = localName(element);
+            if ("script".equalsIgnoreCase(tagName)) {
+                throw new ServiceException("SVG 不允许包含 script");
+            }
+            if ("style".equalsIgnoreCase(tagName) && containsExternalCssReference(element.getTextContent())) {
+                throw new ServiceException("SVG 不允许引用外部样式资源");
+            }
+            NamedNodeMap attributes = element.getAttributes();
+            for (int j = 0; j < attributes.getLength(); j++) {
+                Node attr = attributes.item(j);
+                String attrName = attr.getNodeName().toLowerCase(Locale.ROOT);
+                String attrValue = attr.getNodeValue();
+                if (attrName.startsWith("on")) {
+                    throw new ServiceException("SVG 不允许包含事件处理属性");
+                }
+                if (isHrefAttribute(attrName) && isExternalReference(attrValue)) {
+                    throw new ServiceException("SVG 不允许引用外部资源");
+                }
+                if ("style".equals(attrName) && containsExternalCssReference(attrValue)) {
+                    throw new ServiceException("SVG 不允许在样式中引用外部资源");
+                }
+            }
+        }
+    }
+
+    private static String localName(Node node) {
+        String localName = node.getLocalName();
+        return localName != null ? localName : node.getNodeName();
+    }
+
+    private static boolean isHrefAttribute(String attrName) {
+        return "href".equals(attrName) || "xlink:href".equals(attrName) || attrName.endsWith(":href");
+    }
+
+    private static boolean isExternalReference(String value) {
+        if (value == null) {
+            return false;
+        }
+        String normalized = value.trim().toLowerCase(Locale.ROOT);
+        return normalized.startsWith("http:")
+                || normalized.startsWith("https:")
+                || normalized.startsWith("//")
+                || normalized.startsWith("file:")
+                || normalized.startsWith("jar:")
+                || normalized.startsWith("ftp:")
+                || normalized.startsWith("data:");
+    }
+
+    private static boolean containsExternalCssReference(String value) {
+        if (value == null) {
+            return false;
+        }
+        String normalized = value.toLowerCase(Locale.ROOT).replaceAll("\\s+", "");
+        return normalized.contains("@import")
+                || normalized.contains("url(http:")
+                || normalized.contains("url('http:")
+                || normalized.contains("url(\"http:")
+                || normalized.contains("url(https:")
+                || normalized.contains("url('https:")
+                || normalized.contains("url(\"https:")
+                || normalized.contains("url('//")
+                || normalized.contains("url(\"//")
+                || normalized.contains("url(file:")
+                || normalized.contains("url('file:")
+                || normalized.contains("url(\"file:")
+                || normalized.contains("url(jar:")
+                || normalized.contains("url('jar:")
+                || normalized.contains("url(\"jar:")
+                || normalized.contains("url(ftp:")
+                || normalized.contains("url('ftp:")
+                || normalized.contains("url(\"ftp:")
+                || normalized.contains("url(data:")
+                || normalized.contains("url('data:")
+                || normalized.contains("url(\"data:");
     }
 
     private static String extFromMime(String mimeType) {
@@ -189,5 +316,9 @@ public class ImageDocumentParser implements DocumentParser {
         }
         int dot = fileName.lastIndexOf('.');
         return dot > 0 ? fileName.substring(0, dot) : fileName;
+    }
+
+    private static int lengthOf(String value) {
+        return value == null ? 0 : value.length();
     }
 }

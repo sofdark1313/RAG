@@ -84,8 +84,9 @@ public class RoutingVlmService implements VlmService {
         JsonObject respJson;
         try (Response response = syncHttpClient.newCall(request).execute()) {
             if (!response.isSuccessful()) {
-                String body = HttpResponseHelper.readBody(response.body());
-                log.warn("VLM 请求失败: status={}, body={}", response.code(), body);
+                String responsePreview = HttpResponseHelper.readBodyPreview(response.body());
+                log.warn("VLM 请求失败: status={}, responsePreviewLength={}",
+                        response.code(), responsePreview.length());
                 throw new ModelClientException(
                         "VLM 请求失败: HTTP " + response.code(),
                         ModelClientErrorType.fromHttpStatus(response.code()),

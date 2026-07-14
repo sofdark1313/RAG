@@ -43,35 +43,46 @@ import java.util.stream.Collectors;
 @ConditionalOnProperty(name = "rag.vector.type", havingValue = "milvus", matchIfMissing = true)
 public class MilvusRetrieverService implements RetrieverService {
 
+    private static final int DEFAULT_TOP_K = 5;
+    private static final int MAX_TOP_K = 100;
+    private static final int MAX_COLLECTION_NAME_LENGTH = 128;
+
     private final EmbeddingService embeddingService;
     private final MilvusClientV2 milvusClient;
     private final RAGDefaultProperties ragDefaultProperties;
 
     @Override
     public List<RetrievedChunk> retrieve(RetrieveRequest retrieveParam) {
-        List<Float> emb = embeddingService.embed(retrieveParam.getQuery());
-        float[] vec = toArray(emb);
-
-        float[] norm = normalize(vec);
-
-        return retrieveByVector(norm, retrieveParam);
+        RetrieveRequest actualRequest = normalizeRequest(retrieveParam);
+        if (StrUtil.isBlank(actualRequest.getQuery())) {
+            return List.of();
+        }
+        List<Float> emb = embeddingService.embed(actualRequest.getQuery());
+        float[] vector = toArray(emb);
+        if (!isUsableVector(vector)) {
+            return List.of();
+        }
+        return retrieveByVector(vector, actualRequest);
     }
 
     @Override
     public List<RetrievedChunk> retrieveByVector(float[] vector, RetrieveRequest retrieveParam) {
-        List<BaseVector> vectors = List.of(new FloatVec(vector));
+        RetrieveRequest actualRequest = normalizeRequest(retrieveParam);
+        String collectionName = resolveCollectionName(actualRequest.getCollectionName());
+        if (StrUtil.isBlank(collectionName) || !isUsableVector(vector)) {
+            return List.of();
+        }
+        List<BaseVector> vectors = List.of(new FloatVec(normalize(vector)));
 
         Map<String, Object> params = new HashMap<>();
         params.put("metric_type", ragDefaultProperties.getMetricType());
         params.put("ef", 128);
 
         SearchReq req = SearchReq.builder()
-                .collectionName(
-                        StrUtil.isBlank(retrieveParam.getCollectionName()) ? ragDefaultProperties.getCollectionName() : retrieveParam.getCollectionName()
-                )
+                .collectionName(collectionName)
                 .annsField("embedding")
                 .data(vectors)
-                .topK(retrieveParam.getTopK())
+                .topK(actualRequest.getTopK())
                 .searchParams(params)
                 .outputFields(List.of("id", "content", "metadata"))
                 .build();
@@ -94,17 +105,77 @@ public class MilvusRetrieverService implements RetrieverService {
     }
 
     private static float[] toArray(List<Float> list) {
+        if (list == null || list.isEmpty()) {
+            return new float[0];
+        }
         float[] arr = new float[list.size()];
-        for (int i = 0; i < list.size(); i++) arr[i] = list.get(i);
+        for (int i = 0; i < list.size(); i++) {
+            Float value = list.get(i);
+            arr[i] = value == null ? 0F : value;
+        }
         return arr;
     }
 
     private static float[] normalize(float[] v) {
         double sum = 0.0;
-        for (float x : v) sum += x * x;
+        for (float x : v) {
+            sum += x * x;
+        }
         double len = Math.sqrt(sum);
         float[] nv = new float[v.length];
-        for (int i = 0; i < v.length; i++) nv[i] = (float) (v[i] / len);
+        if (len <= 0) {
+            return nv;
+        }
+        for (int i = 0; i < v.length; i++) {
+            nv[i] = (float) (v[i] / len);
+        }
         return nv;
+    }
+
+    private RetrieveRequest normalizeRequest(RetrieveRequest request) {
+        RetrieveRequest source = request == null ? new RetrieveRequest() : request;
+        return RetrieveRequest.builder()
+                .query(StrUtil.trimToNull(source.getQuery()))
+                .topK(normalizeTopK(source.getTopK()))
+                .collectionName(normalizeCollectionName(source.getCollectionName()))
+                .metadataFilters(source.getMetadataFilters())
+                .build();
+    }
+
+    private int normalizeTopK(int topK) {
+        if (topK <= 0) {
+            return DEFAULT_TOP_K;
+        }
+        return Math.min(topK, MAX_TOP_K);
+    }
+
+    private String resolveCollectionName(String collectionName) {
+        String normalized = normalizeCollectionName(collectionName);
+        if (StrUtil.isNotBlank(normalized)) {
+            return normalized;
+        }
+        return normalizeCollectionName(ragDefaultProperties.getCollectionName());
+    }
+
+    private String normalizeCollectionName(String collectionName) {
+        String normalized = StrUtil.trimToNull(collectionName);
+        if (normalized == null || normalized.length() > MAX_COLLECTION_NAME_LENGTH) {
+            return null;
+        }
+        return normalized;
+    }
+
+    private boolean isUsableVector(float[] vector) {
+        if (vector == null || vector.length == 0) {
+            return false;
+        }
+        boolean hasMagnitude = false;
+        for (float value : vector) {
+            if (!Float.isFinite(value)) {
+                return false;
+            }
+            hasMagnitude = hasMagnitude || value != 0F;
+        }
+        return hasMagnitude;
     }
 }

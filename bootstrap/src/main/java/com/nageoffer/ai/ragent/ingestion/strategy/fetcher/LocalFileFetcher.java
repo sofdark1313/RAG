@@ -27,13 +27,10 @@ import org.springframework.stereotype.Component;
 import org.springframework.util.StringUtils;
 
 import java.io.InputStream;
-import java.net.URI;
-import java.nio.file.Files;
-import java.nio.file.Path;
 
 /**
  * 本地文件抓取器
- * 负责从本地文件系统或对象存储（如 S3 协议）中读取文件内容
+ * 已禁用服务器本地文件系统读取，仅保留对历史 FILE 来源中 s3:// 对象存储定位符的兼容。
  */
 @Component
 @RequiredArgsConstructor
@@ -53,24 +50,17 @@ public class LocalFileFetcher implements DocumentFetcher {
         if (!StringUtils.hasText(location)) {
             throw new ServiceException("文件路径不能为空");
         }
+        if (!location.startsWith("s3://")) {
+            throw new ServiceException("FILE 来源不支持读取服务器本地路径，请通过上传接口或 s3:// 对象存储定位符传入文件");
+        }
         try {
             byte[] bytes;
             String fileName = source.getFileName();
-            if (location.startsWith("s3://")) {
-                try (InputStream is = fileStorageService.openStream(location)) {
-                    bytes = is.readAllBytes();
-                }
-                if (!StringUtils.hasText(fileName)) {
-                    fileName = extractFileName(location);
-                }
-            } else {
-                Path path = location.startsWith("file://")
-                        ? Path.of(URI.create(location))
-                        : Path.of(location);
-                bytes = Files.readAllBytes(path);
-                if (!StringUtils.hasText(fileName) && path.getFileName() != null) {
-                    fileName = path.getFileName().toString();
-                }
+            try (InputStream is = fileStorageService.openStream(location)) {
+                bytes = is.readAllBytes();
+            }
+            if (!StringUtils.hasText(fileName)) {
+                fileName = extractFileName(location);
             }
             String mimeType = MimeTypeDetector.detect(bytes, fileName);
             return new FetchResult(bytes, mimeType, fileName);

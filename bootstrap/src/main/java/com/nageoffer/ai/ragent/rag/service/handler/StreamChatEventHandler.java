@@ -81,7 +81,7 @@ public class StreamChatEventHandler implements StreamCallback {
      */
     private void initialize() {
         sender.sendEvent(SSEEventType.META.value(), new MetaPayload(conversationId, taskId));
-        taskManager.register(taskId, sender, this::buildCompletionPayloadOnCancel);
+        taskManager.register(taskId, userId, sender, this::buildCompletionPayloadOnCancel);
     }
 
     /**

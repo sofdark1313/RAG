@@ -61,6 +61,9 @@ import static com.nageoffer.ai.ragent.rag.constant.RAGConstant.MULTI_CHANNEL_KEY
 @RequiredArgsConstructor
 public class RetrievalEngine {
 
+    private static final int DEFAULT_TOP_K = 5;
+    private static final int MAX_TOP_K = 100;
+
     private final SearchChannelProperties searchProperties;
     private final ContextFormatter contextFormatter;
     private final PromptTemplateLoader templateLoader;
@@ -81,7 +84,7 @@ public class RetrievalEngine {
                     .build();
         }
 
-        int finalTopK = topK > 0 ? topK : searchProperties.getDefaultTopK();
+        int finalTopK = normalizeTopK(topK > 0 ? topK : searchProperties.getDefaultTopK());
         List<CompletableFuture<SubQuestionContext>> tasks = subIntents.stream()
                 .map(si -> CompletableFuture.supplyAsync(
                         () -> {
@@ -91,7 +94,8 @@ public class RetrievalEngine {
                                         resolveSubQuestionTopK(si, finalTopK)
                                 );
                             } catch (Exception e) {
-                                log.error("子问题上下文构建失败，降级为空上下文，question：{}", si.subQuestion(), e);
+                                log.error("子问题上下文构建失败，降级为空上下文，questionLength={}",
+                                        lengthOf(si.subQuestion()), e);
                                 return new SubQuestionContext(si.subQuestion(), "", "", Map.of());
                             }
                         },
@@ -162,7 +166,7 @@ public class RetrievalEngine {
      * 子问题实际 TopK 计算规则
      */
     private int resolveSubQuestionTopK(SubQuestionIntent intent, int fallbackTopK) {
-        return NodeScoreFilters.kb(intent.nodeScores()).stream()
+        int candidateTopK = NodeScoreFilters.kb(intent.nodeScores()).stream()
                 .map(NodeScore::getNode)
                 .filter(Objects::nonNull)
                 .map(IntentNode::getTopK)
@@ -170,6 +174,7 @@ public class RetrievalEngine {
                 .filter(topK -> topK > 0)
                 .max(Integer::compareTo)
                 .orElse(fallbackTopK);
+        return normalizeTopK(candidateTopK);
     }
 
     private void appendSection(StringBuilder builder, String section, int index, String question, String context) {
@@ -280,6 +285,17 @@ public class RetrievalEngine {
     }
 
     private record ToolOutput(String toolId, CallToolResult result) {
+    }
+
+    private int lengthOf(String text) {
+        return text == null ? 0 : text.length();
+    }
+
+    private int normalizeTopK(int topK) {
+        if (topK <= 0) {
+            return DEFAULT_TOP_K;
+        }
+        return Math.min(topK, MAX_TOP_K);
     }
 
     private record SubQuestionContext(String question,

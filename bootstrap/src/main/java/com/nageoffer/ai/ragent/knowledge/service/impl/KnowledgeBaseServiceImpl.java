@@ -19,6 +19,7 @@ package com.nageoffer.ai.ragent.knowledge.service.impl;
 
 import cn.hutool.core.bean.BeanUtil;
 import cn.hutool.core.collection.CollUtil;
+import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
@@ -34,9 +35,12 @@ import com.nageoffer.ai.ragent.knowledge.dao.mapper.KnowledgeDocumentMapper;
 import com.nageoffer.ai.ragent.framework.context.UserContext;
 import com.nageoffer.ai.ragent.framework.exception.ClientException;
 import com.nageoffer.ai.ragent.framework.exception.ServiceException;
+import com.nageoffer.ai.ragent.framework.web.PageRequests;
 import com.nageoffer.ai.ragent.rag.core.vector.VectorSpaceId;
+import com.nageoffer.ai.ragent.rag.core.vector.VectorSpaceNames;
 import com.nageoffer.ai.ragent.rag.core.vector.VectorSpaceSpec;
 import com.nageoffer.ai.ragent.rag.core.vector.VectorStoreAdmin;
+import com.nageoffer.ai.ragent.rag.util.S3BucketNames;
 import com.nageoffer.ai.ragent.knowledge.service.KnowledgeBaseService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
@@ -58,6 +62,11 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
 
+    private static final int MAX_NAME_LENGTH = 128;
+    private static final int MAX_EMBEDDING_MODEL_LENGTH = 64;
+    private static final int MAX_COLLECTION_NAME_LENGTH = 64;
+    private static final int MAX_ID_LENGTH = 20;
+
     private final KnowledgeBaseMapper knowledgeBaseMapper;
     private final KnowledgeDocumentMapper knowledgeDocumentMapper;
     private final VectorStoreAdmin vectorStoreAdmin;
@@ -66,21 +75,27 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
     @Transactional
     @Override
     public String create(KnowledgeBaseCreateRequest requestParam) {
+        if (requestParam == null) {
+            throw new ClientException("请求不能为空");
+        }
+        String name = normalizeRequiredText(requestParam.getName(), MAX_NAME_LENGTH, "知识库名称");
+        String embeddingModel = normalizeRequiredText(requestParam.getEmbeddingModel(), MAX_EMBEDDING_MODEL_LENGTH, "嵌入模型");
+        String collectionName = normalizeKnowledgeCollectionName(requestParam.getCollectionName());
+
         // 名称重复校验
-        String name = requestParam.getName().replaceAll("\\s+", "");
         Long count = knowledgeBaseMapper.selectCount(
                 new LambdaQueryWrapper<KnowledgeBaseDO>()
                         .eq(KnowledgeBaseDO::getName, name)
                         .eq(KnowledgeBaseDO::getDeleted, 0)
         );
         if (count > 0) {
-            throw new ServiceException("知识库名称已存在：" + requestParam.getName());
+            throw new ServiceException("知识库名称已存在：" + name);
         }
 
         KnowledgeBaseDO kbDO = KnowledgeBaseDO.builder()
-                .name(requestParam.getName())
-                .embeddingModel(requestParam.getEmbeddingModel())
-                .collectionName(requestParam.getCollectionName())
+                .name(name)
+                .embeddingModel(embeddingModel)
+                .collectionName(collectionName)
                 .createdBy(UserContext.getUsername())
                 .updatedBy(UserContext.getUsername())
                 .deleted(0)
@@ -88,7 +103,7 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
 
         knowledgeBaseMapper.insert(kbDO);
 
-        String bucketName = requestParam.getCollectionName();
+        String bucketName = collectionName;
         try {
             s3Client.createBucket(builder -> builder.bucket(bucketName));
             log.info("成功创建RestFS存储桶，Bucket名称: {}", bucketName);
@@ -103,9 +118,9 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
 
         VectorSpaceSpec spaceSpec = VectorSpaceSpec.builder()
                 .spaceId(VectorSpaceId.builder()
-                        .logicalName(requestParam.getCollectionName())
+                        .logicalName(collectionName)
                         .build())
-                .remark(requestParam.getName())
+                .remark(name)
                 .build();
         vectorStoreAdmin.ensureVectorSpace(spaceSpec);
 
@@ -114,17 +129,22 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
 
     @Override
     public void update(KnowledgeBaseUpdateRequest requestParam) {
-        KnowledgeBaseDO kb = knowledgeBaseMapper.selectById(requestParam.getId());
+        if (requestParam == null) {
+            throw new ClientException("请求不能为空");
+        }
+        String normalizedKbId = normalizeRequiredId(requestParam.getId(), "知识库ID");
+        KnowledgeBaseDO kb = knowledgeBaseMapper.selectById(normalizedKbId);
         if (kb == null || kb.getDeleted() != null && kb.getDeleted() == 1) {
-            throw new ClientException("知识库不存在：" + requestParam.getId());
+            throw new ClientException("知识库不存在：" + normalizedKbId);
         }
 
-        if (StringUtils.hasText(requestParam.getEmbeddingModel())
-                && !requestParam.getEmbeddingModel().equals(kb.getEmbeddingModel())) {
+        String embeddingModel = normalizeOptionalText(requestParam.getEmbeddingModel(), MAX_EMBEDDING_MODEL_LENGTH, "嵌入模型");
+        if (StringUtils.hasText(embeddingModel)
+                && !embeddingModel.equals(kb.getEmbeddingModel())) {
 
             Long docCount = knowledgeDocumentMapper.selectCount(
                     new LambdaQueryWrapper<KnowledgeDocumentDO>()
-                            .eq(KnowledgeDocumentDO::getKbId, requestParam.getId())
+                            .eq(KnowledgeDocumentDO::getKbId, normalizedKbId)
                             .gt(KnowledgeDocumentDO::getChunkCount, 0)
                             .eq(KnowledgeDocumentDO::getDeleted, 0)
             );
@@ -132,11 +152,12 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
                 throw new ClientException("知识库已存在向量化文档，不允许修改嵌入模型");
             }
 
-            kb.setEmbeddingModel(requestParam.getEmbeddingModel());
+            kb.setEmbeddingModel(embeddingModel);
         }
 
-        if (StringUtils.hasText(requestParam.getName())) {
-            kb.setName(requestParam.getName());
+        String name = normalizeOptionalText(requestParam.getName(), MAX_NAME_LENGTH, "知识库名称");
+        if (StringUtils.hasText(name)) {
+            kb.setName(name);
         }
 
         kb.setUpdatedBy(UserContext.getUsername());
@@ -145,45 +166,47 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
 
     @Override
     public void rename(String kbId, KnowledgeBaseUpdateRequest requestParam) {
-        KnowledgeBaseDO kb = knowledgeBaseMapper.selectById(kbId);
+        if (requestParam == null) {
+            throw new ClientException("请求不能为空");
+        }
+        String normalizedKbId = normalizeRequiredId(kbId, "知识库ID");
+        KnowledgeBaseDO kb = knowledgeBaseMapper.selectById(normalizedKbId);
         if (kb == null || kb.getDeleted() != null && kb.getDeleted() == 1) {
             throw new ClientException("知识库不存在");
         }
 
-        if (!StringUtils.hasText(requestParam.getName())) {
-            throw new ClientException("知识库名称不能为空");
-        }
+        String name = normalizeRequiredText(requestParam.getName(), MAX_NAME_LENGTH, "知识库名称");
 
         // 名称重复校验（排除当前知识库）
-        String name = requestParam.getName().replaceAll("\\s+", "");
         Long count = knowledgeBaseMapper.selectCount(
                 Wrappers.lambdaQuery(KnowledgeBaseDO.class)
                         .eq(KnowledgeBaseDO::getName, name)
-                        .ne(KnowledgeBaseDO::getId, kbId)
+                        .ne(KnowledgeBaseDO::getId, normalizedKbId)
                         .eq(KnowledgeBaseDO::getDeleted, 0)
         );
         if (count > 0) {
-            throw new ServiceException("知识库名称已存在：" + requestParam.getName());
+            throw new ServiceException("知识库名称已存在：" + name);
         }
 
-        kb.setName(requestParam.getName());
+        kb.setName(name);
         kb.setUpdatedBy(UserContext.getUsername());
         knowledgeBaseMapper.updateById(kb);
 
-        log.info("成功重命名知识库, kbId={}, newName={}", kbId, requestParam.getName());
+        log.info("成功重命名知识库, kbId={}, newName={}", normalizedKbId, name);
     }
 
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void delete(String kbId) {
-        KnowledgeBaseDO kbDO = knowledgeBaseMapper.selectById(kbId);
+        String normalizedKbId = normalizeRequiredId(kbId, "知识库ID");
+        KnowledgeBaseDO kbDO = knowledgeBaseMapper.selectById(normalizedKbId);
         if (kbDO == null || kbDO.getDeleted() != null && kbDO.getDeleted() == 1) {
             throw new ClientException("知识库不存在");
         }
 
         Long docCount = knowledgeDocumentMapper.selectCount(
                 Wrappers.lambdaQuery(KnowledgeDocumentDO.class)
-                        .eq(KnowledgeDocumentDO::getKbId, kbId)
+                        .eq(KnowledgeDocumentDO::getKbId, normalizedKbId)
                         .eq(KnowledgeDocumentDO::getDeleted, 0)
         );
         if (docCount != null && docCount > 0) {
@@ -197,7 +220,8 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
 
     @Override
     public KnowledgeBaseVO queryById(String kbId) {
-        KnowledgeBaseDO kbDO = knowledgeBaseMapper.selectById(kbId);
+        String normalizedKbId = normalizeRequiredId(kbId, "知识库ID");
+        KnowledgeBaseDO kbDO = knowledgeBaseMapper.selectById(normalizedKbId);
         if (kbDO == null || kbDO.getDeleted() != null && kbDO.getDeleted() == 1) {
             throw new ClientException("知识库不存在");
         }
@@ -206,12 +230,13 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
 
     @Override
     public IPage<KnowledgeBaseVO> pageQuery(KnowledgeBasePageRequest requestParam) {
+        String name = normalizeOptionalText(requestParam == null ? null : requestParam.getName(), MAX_NAME_LENGTH, "知识库名称");
         LambdaQueryWrapper<KnowledgeBaseDO> queryWrapper = Wrappers.lambdaQuery(KnowledgeBaseDO.class)
-                .like(StringUtils.hasText(requestParam.getName()), KnowledgeBaseDO::getName, requestParam.getName())
+                .like(StringUtils.hasText(name), KnowledgeBaseDO::getName, name)
                 .eq(KnowledgeBaseDO::getDeleted, 0)
                 .orderByDesc(KnowledgeBaseDO::getUpdateTime);
 
-        Page<KnowledgeBaseDO> page = new Page<>(requestParam.getCurrent(), requestParam.getSize());
+        Page<KnowledgeBaseDO> page = PageRequests.from(requestParam);
         IPage<KnowledgeBaseDO> result = knowledgeBaseMapper.selectPage(page, queryWrapper);
         Map<String, Long> docCountMap = new HashMap<>();
         if (CollUtil.isNotEmpty(result.getRecords())) {
@@ -243,5 +268,39 @@ public class KnowledgeBaseServiceImpl implements KnowledgeBaseService {
             vo.setDocumentCount(docCount != null ? docCount : 0L);
             return vo;
         });
+    }
+
+    private String normalizeRequiredText(String value, int maxLength, String fieldName) {
+        String text = StrUtil.trimToNull(value);
+        if (StrUtil.isBlank(text)) {
+            throw new ClientException(fieldName + "不能为空");
+        }
+        if (text.length() > maxLength) {
+            throw new ClientException(fieldName + "长度不能超过" + maxLength + "个字符");
+        }
+        return text;
+    }
+
+    private String normalizeOptionalText(String value, int maxLength, String fieldName) {
+        String text = StrUtil.trimToNull(value);
+        if (text != null && text.length() > maxLength) {
+            throw new ClientException(fieldName + "长度不能超过" + maxLength + "个字符");
+        }
+        return text;
+    }
+
+    private String normalizeKnowledgeCollectionName(String value) {
+        String collectionName = normalizeRequiredText(value, MAX_COLLECTION_NAME_LENGTH, "Collection名称");
+        VectorSpaceNames.normalizeRequiredLogicalName(collectionName, "Collection名称");
+        S3BucketNames.normalizeRequiredBucketName(collectionName, "Collection名称");
+        return collectionName;
+    }
+
+    private String normalizeRequiredId(String value, String fieldName) {
+        String text = normalizeRequiredText(value, MAX_ID_LENGTH, fieldName);
+        if (!text.matches("\\d{1,20}")) {
+            throw new ClientException(fieldName + "不合法");
+        }
+        return text;
     }
 }

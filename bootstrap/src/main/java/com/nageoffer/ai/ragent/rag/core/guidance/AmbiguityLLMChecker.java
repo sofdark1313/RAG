@@ -77,7 +77,7 @@ public class AmbiguityLLMChecker {
             JsonElement root = JsonParser.parseString(cleaned);
 
             if (!root.isJsonObject()) {
-                log.warn("歧义确认 LLM 返回非 JSON 对象: {}", raw);
+                log.warn("歧义确认 LLM 返回非 JSON 对象: rawLength={}", lengthOf(raw));
                 return true;
             }
 
@@ -85,14 +85,15 @@ public class AmbiguityLLMChecker {
             if (obj.has("ambiguous")) {
                 boolean ambiguous = obj.get("ambiguous").getAsBoolean();
                 String reason = obj.has("reason") ? obj.get("reason").getAsString() : "";
-                log.info("LLM 歧义确认结果: ambiguous={}, reason={}, question={}", ambiguous, reason, question);
+                log.info("LLM 歧义确认结果: ambiguous={}, reasonLength={}, questionLength={}",
+                        ambiguous, lengthOf(reason), lengthOf(question));
                 return ambiguous;
             }
 
-            log.warn("歧义确认 LLM 返回缺少 ambiguous 字段: {}", raw);
+            log.warn("歧义确认 LLM 返回缺少 ambiguous 字段: rawLength={}", lengthOf(raw));
             return true;
         } catch (Exception e) {
-            log.warn("歧义确认 LLM 调用失败, 降级为触发澄清, question={}", question, e);
+            log.warn("歧义确认 LLM 调用失败, 降级为触发澄清, questionLength={}", lengthOf(question), e);
             return true;
         }
     }
@@ -106,5 +107,9 @@ public class AmbiguityLLMChecker {
                             node.getId(), node.getName(), systemPath, ns.getScore());
                 })
                 .collect(Collectors.joining("\n"));
+    }
+
+    private int lengthOf(String text) {
+        return text == null ? 0 : text.length();
     }
 }

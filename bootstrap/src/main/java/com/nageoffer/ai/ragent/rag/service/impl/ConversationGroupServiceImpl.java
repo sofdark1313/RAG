@@ -19,6 +19,7 @@ package com.nageoffer.ai.ragent.rag.service.impl;
 
 import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.nageoffer.ai.ragent.framework.exception.ClientException;
 import com.nageoffer.ai.ragent.rag.dao.entity.ConversationDO;
 import com.nageoffer.ai.ragent.rag.dao.entity.ConversationMessageDO;
 import com.nageoffer.ai.ragent.rag.dao.entity.ConversationSummaryDO;
@@ -35,41 +36,51 @@ import java.util.List;
 @RequiredArgsConstructor
 public class ConversationGroupServiceImpl implements ConversationGroupService {
 
+    private static final int MAX_QUERY_LIMIT = 500;
+    private static final int MAX_ID_LENGTH = 20;
+
     private final ConversationMessageMapper messageMapper;
     private final ConversationSummaryMapper summaryMapper;
     private final ConversationMapper conversationMapper;
 
     @Override
     public List<ConversationMessageDO> listLatestUserOnlyMessages(String conversationId, String userId, int limit) {
-        if (StrUtil.isBlank(conversationId) || StrUtil.isBlank(userId) || limit <= 0) {
+        String normalizedConversationId = normalizeOptionalId(conversationId, "会话ID");
+        String normalizedUserId = normalizeOptionalId(userId, "用户ID");
+        if (StrUtil.isBlank(normalizedConversationId) || StrUtil.isBlank(normalizedUserId) || limit <= 0) {
             return List.of();
         }
+        int safeLimit = Math.min(limit, MAX_QUERY_LIMIT);
         return messageMapper.selectList(
                 Wrappers.lambdaQuery(ConversationMessageDO.class)
-                        .eq(ConversationMessageDO::getConversationId, conversationId)
-                        .eq(ConversationMessageDO::getUserId, userId)
+                        .eq(ConversationMessageDO::getConversationId, normalizedConversationId)
+                        .eq(ConversationMessageDO::getUserId, normalizedUserId)
                         .eq(ConversationMessageDO::getRole, "user")
                         .eq(ConversationMessageDO::getDeleted, 0)
                         .orderByDesc(ConversationMessageDO::getCreateTime)
-                        .last("limit " + limit)
+                        .last("limit " + safeLimit)
         );
     }
 
     @Override
     public List<ConversationMessageDO> listMessagesBetweenIds(String conversationId, String userId, String afterId, String beforeId) {
-        if (StrUtil.isBlank(conversationId) || StrUtil.isBlank(userId)) {
+        String normalizedConversationId = normalizeOptionalId(conversationId, "会话ID");
+        String normalizedUserId = normalizeOptionalId(userId, "用户ID");
+        String normalizedAfterId = normalizeOptionalId(afterId, "起始消息ID");
+        String normalizedBeforeId = normalizeOptionalId(beforeId, "结束消息ID");
+        if (StrUtil.isBlank(normalizedConversationId) || StrUtil.isBlank(normalizedUserId)) {
             return List.of();
         }
         var query = Wrappers.lambdaQuery(ConversationMessageDO.class)
-                .eq(ConversationMessageDO::getConversationId, conversationId)
-                .eq(ConversationMessageDO::getUserId, userId)
+                .eq(ConversationMessageDO::getConversationId, normalizedConversationId)
+                .eq(ConversationMessageDO::getUserId, normalizedUserId)
                 .in(ConversationMessageDO::getRole, "user", "assistant")
                 .eq(ConversationMessageDO::getDeleted, 0);
-        if (afterId != null) {
-            query.gt(ConversationMessageDO::getId, afterId);
+        if (normalizedAfterId != null) {
+            query.gt(ConversationMessageDO::getId, normalizedAfterId);
         }
-        if (beforeId != null) {
-            query.lt(ConversationMessageDO::getId, beforeId);
+        if (normalizedBeforeId != null) {
+            query.lt(ConversationMessageDO::getId, normalizedBeforeId);
         }
         return messageMapper.selectList(
                 query.orderByAsc(ConversationMessageDO::getId)
@@ -78,13 +89,15 @@ public class ConversationGroupServiceImpl implements ConversationGroupService {
 
     @Override
     public String findMaxMessageIdAtOrBefore(String conversationId, String userId, java.util.Date at) {
-        if (StrUtil.isBlank(conversationId) || StrUtil.isBlank(userId) || at == null) {
+        String normalizedConversationId = normalizeOptionalId(conversationId, "会话ID");
+        String normalizedUserId = normalizeOptionalId(userId, "用户ID");
+        if (StrUtil.isBlank(normalizedConversationId) || StrUtil.isBlank(normalizedUserId) || at == null) {
             return null;
         }
         ConversationMessageDO record = messageMapper.selectOne(
                 Wrappers.lambdaQuery(ConversationMessageDO.class)
-                        .eq(ConversationMessageDO::getConversationId, conversationId)
-                        .eq(ConversationMessageDO::getUserId, userId)
+                        .eq(ConversationMessageDO::getConversationId, normalizedConversationId)
+                        .eq(ConversationMessageDO::getUserId, normalizedUserId)
                         .eq(ConversationMessageDO::getDeleted, 0)
                         .le(ConversationMessageDO::getCreateTime, at)
                         .orderByDesc(ConversationMessageDO::getId)
@@ -95,13 +108,15 @@ public class ConversationGroupServiceImpl implements ConversationGroupService {
 
     @Override
     public long countUserMessages(String conversationId, String userId) {
-        if (StrUtil.isBlank(conversationId) || StrUtil.isBlank(userId)) {
+        String normalizedConversationId = normalizeOptionalId(conversationId, "会话ID");
+        String normalizedUserId = normalizeOptionalId(userId, "用户ID");
+        if (StrUtil.isBlank(normalizedConversationId) || StrUtil.isBlank(normalizedUserId)) {
             return 0;
         }
         return messageMapper.selectCount(
                 Wrappers.lambdaQuery(ConversationMessageDO.class)
-                        .eq(ConversationMessageDO::getConversationId, conversationId)
-                        .eq(ConversationMessageDO::getUserId, userId)
+                        .eq(ConversationMessageDO::getConversationId, normalizedConversationId)
+                        .eq(ConversationMessageDO::getUserId, normalizedUserId)
                         .eq(ConversationMessageDO::getRole, "user")
                         .eq(ConversationMessageDO::getDeleted, 0)
         );
@@ -109,13 +124,15 @@ public class ConversationGroupServiceImpl implements ConversationGroupService {
 
     @Override
     public ConversationSummaryDO findLatestSummary(String conversationId, String userId) {
-        if (StrUtil.isBlank(conversationId) || StrUtil.isBlank(userId)) {
+        String normalizedConversationId = normalizeOptionalId(conversationId, "会话ID");
+        String normalizedUserId = normalizeOptionalId(userId, "用户ID");
+        if (StrUtil.isBlank(normalizedConversationId) || StrUtil.isBlank(normalizedUserId)) {
             return null;
         }
         return summaryMapper.selectOne(
                 Wrappers.lambdaQuery(ConversationSummaryDO.class)
-                        .eq(ConversationSummaryDO::getConversationId, conversationId)
-                        .eq(ConversationSummaryDO::getUserId, userId)
+                        .eq(ConversationSummaryDO::getConversationId, normalizedConversationId)
+                        .eq(ConversationSummaryDO::getUserId, normalizedUserId)
                         .eq(ConversationSummaryDO::getDeleted, 0)
                         .orderByDesc(ConversationSummaryDO::getId)
                         .last("limit 1")
@@ -124,14 +141,27 @@ public class ConversationGroupServiceImpl implements ConversationGroupService {
 
     @Override
     public ConversationDO findConversation(String conversationId, String userId) {
-        if (StrUtil.isBlank(conversationId) || StrUtil.isBlank(userId)) {
+        String normalizedConversationId = normalizeOptionalId(conversationId, "会话ID");
+        String normalizedUserId = normalizeOptionalId(userId, "用户ID");
+        if (StrUtil.isBlank(normalizedConversationId) || StrUtil.isBlank(normalizedUserId)) {
             return null;
         }
         return conversationMapper.selectOne(
                 Wrappers.lambdaQuery(ConversationDO.class)
-                        .eq(ConversationDO::getConversationId, conversationId)
-                        .eq(ConversationDO::getUserId, userId)
+                        .eq(ConversationDO::getConversationId, normalizedConversationId)
+                        .eq(ConversationDO::getUserId, normalizedUserId)
                         .eq(ConversationDO::getDeleted, 0)
         );
+    }
+
+    private String normalizeOptionalId(String value, String fieldName) {
+        String text = StrUtil.trimToNull(value);
+        if (text == null) {
+            return null;
+        }
+        if (text.length() > MAX_ID_LENGTH || !text.matches("\\d{1,20}")) {
+            throw new ClientException(fieldName + "不合法");
+        }
+        return text;
     }
 }

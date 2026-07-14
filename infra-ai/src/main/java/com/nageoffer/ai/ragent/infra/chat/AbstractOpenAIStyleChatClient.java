@@ -107,8 +107,9 @@ public abstract class AbstractOpenAIStyleChatClient implements ChatClient {
         JsonObject respJson;
         try (Response response = syncHttpClient.newCall(requestHttp).execute()) {
             if (!response.isSuccessful()) {
-                String body = HttpResponseHelper.readBody(response.body());
-                log.warn("{} 同步请求失败: status={}, body={}", provider(), response.code(), body);
+                String responsePreview = HttpResponseHelper.readBodyPreview(response.body());
+                log.warn("{} 同步请求失败: status={}, responsePreviewLength={}",
+                        provider(), response.code(), responsePreview.length());
                 throw new ModelClientException(
                         provider() + " 同步请求失败: HTTP " + response.code(),
                         ModelClientErrorType.fromHttpStatus(response.code()),
@@ -170,9 +171,11 @@ public abstract class AbstractOpenAIStyleChatClient implements ChatClient {
     private void doStream(Call call, StreamCallback callback, AtomicBoolean cancelled, boolean reasoningEnabled) {
         try (Response response = call.execute()) {
             if (!response.isSuccessful()) {
-                String body = HttpResponseHelper.readBody(response.body());
+                String responsePreview = HttpResponseHelper.readBodyPreview(response.body());
+                log.warn("{} 流式请求失败: status={}, responsePreviewLength={}",
+                        provider(), response.code(), responsePreview.length());
                 throw new ModelClientException(
-                        provider() + " 流式请求失败: HTTP " + response.code() + " - " + body,
+                        provider() + " 流式请求失败: HTTP " + response.code(),
                         ModelClientErrorType.fromHttpStatus(response.code()),
                         response.code()
                 );
@@ -205,7 +208,8 @@ public abstract class AbstractOpenAIStyleChatClient implements ChatClient {
                         break;
                     }
                 } catch (Exception parseEx) {
-                    log.warn("{} 流式响应解析失败: line={}", provider(), line, parseEx);
+                    log.warn("{} 流式响应解析失败: lineLength={}",
+                            provider(), line.length(), parseEx);
                 }
             }
             if (cancelled.get()) {
@@ -301,4 +305,5 @@ public abstract class AbstractOpenAIStyleChatClient implements ChatClient {
         }
         return message.get("content").getAsString();
     }
+
 }

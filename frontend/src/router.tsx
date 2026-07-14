@@ -1,5 +1,6 @@
 import { Navigate, createBrowserRouter } from "react-router-dom";
 
+import { HomeRedirect, RedirectIfAuth, RequireAdmin, RequireAuth } from "@/components/auth/AuthRouteGuards";
 import { LoginPage } from "@/pages/LoginPage";
 import { ChatPage } from "@/pages/ChatPage";
 import { NotFoundPage } from "@/pages/NotFoundPage";
@@ -18,43 +19,6 @@ import { SystemSettingsPage } from "@/pages/admin/settings/SystemSettingsPage";
 import { SampleQuestionPage } from "@/pages/admin/sample-questions/SampleQuestionPage";
 import { QueryTermMappingPage } from "@/pages/admin/query-term-mapping/QueryTermMappingPage";
 import { UserListPage } from "@/pages/admin/users/UserListPage";
-import { useAuthStore } from "@/stores/authStore";
-
-function RequireAuth({ children }: { children: JSX.Element }) {
-  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
-  if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
-  }
-  return children;
-}
-
-function RequireAdmin({ children }: { children: JSX.Element }) {
-  const user = useAuthStore((state) => state.user);
-  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
-
-  if (!isAuthenticated) {
-    return <Navigate to="/login" replace />;
-  }
-
-  if (user?.role !== "admin") {
-    return <Navigate to="/chat" replace />;
-  }
-
-  return children;
-}
-
-function RedirectIfAuth({ children }: { children: JSX.Element }) {
-  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
-  if (isAuthenticated) {
-    return <Navigate to="/chat" replace />;
-  }
-  return children;
-}
-
-function HomeRedirect() {
-  const isAuthenticated = useAuthStore((state) => state.isAuthenticated);
-  return <Navigate to={isAuthenticated ? "/chat" : "/login"} replace />;
-}
 
 export const router = createBrowserRouter([
   {

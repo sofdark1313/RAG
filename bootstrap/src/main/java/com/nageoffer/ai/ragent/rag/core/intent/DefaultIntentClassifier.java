@@ -164,7 +164,7 @@ public class DefaultIntentClassifier implements IntentClassifier, IntentNodeRegi
                 // 容错：如果模型外面又包了一层 { "results": [...] }
                 arr = root.getAsJsonObject().getAsJsonArray("results");
             } else {
-                log.warn("LLM 返回了非预期的 JSON 格式, 原始响应: {}", raw);
+                log.warn("LLM 返回了非预期的 JSON 格式, rawLength={}", lengthOf(raw));
                 return List.of();
             }
 
@@ -190,18 +190,18 @@ public class DefaultIntentClassifier implements IntentClassifier, IntentNodeRegi
             // 降序排序
             scores.sort(Comparator.comparingDouble(NodeScore::getScore).reversed());
 
-            log.info("当前问题：{}\n意图识别树如下所示：{}\n",
-                    question,
+            log.info("意图识别完成: questionLength={}, topResults={}",
+                    lengthOf(question),
                     JSONUtil.toJsonPrettyStr(
-                            scores.stream().peek(each -> {
-                                IntentNode node = each.getNode();
-                                node.setChildren(null);
-                            }).collect(Collectors.toList())
+                            scores.stream()
+                                    .limit(10)
+                                    .map(this::toLogEntry)
+                                    .collect(Collectors.toList())
                     )
             );
             return scores;
         } catch (Exception e) {
-            log.warn("解析 LLM 响应失败, 原始内容: {}", raw, e);
+            log.warn("解析 LLM 响应失败, rawLength={}", lengthOf(raw), e);
             return List.of();
         }
     }
@@ -316,6 +316,19 @@ public class DefaultIntentClassifier implements IntentClassifier, IntentNodeRegi
         fillFullPath(roots, null);
 
         return roots;
+    }
+
+    private int lengthOf(String text) {
+        return text == null ? 0 : text.length();
+    }
+
+    private Map<String, Object> toLogEntry(NodeScore score) {
+        Map<String, Object> item = new HashMap<>();
+        IntentNode node = score.getNode();
+        item.put("id", node == null ? null : node.getId());
+        item.put("name", node == null ? null : node.getName());
+        item.put("score", score.getScore());
+        return item;
     }
 
     /**

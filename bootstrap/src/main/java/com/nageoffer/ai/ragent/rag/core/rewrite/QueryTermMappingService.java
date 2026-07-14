@@ -67,7 +67,8 @@ public class QueryTermMappingService {
         }
 
         if (!Objects.equals(text, result)) {
-            log.info("查询归一化：original='{}', normalized='{}'", text, result);
+            log.info("查询归一化完成: originalLength={}, normalizedLength={}, mappingCount={}",
+                    lengthOf(text), lengthOf(result), mappings.size());
         }
         return result;
     }
@@ -95,5 +96,9 @@ public class QueryTermMappingService {
         cacheManager.saveMappingsToCache(dbList);
         log.info("术语映射规则从数据库加载完成，共 {} 条规则", dbList.size());
         return dbList;
+    }
+
+    private int lengthOf(String text) {
+        return text == null ? 0 : text.length();
     }
 }

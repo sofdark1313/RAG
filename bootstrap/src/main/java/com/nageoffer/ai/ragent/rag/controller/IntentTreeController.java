@@ -82,7 +82,7 @@ public class IntentTreeController {
      */
     @PostMapping("/intent-tree/batch/enable")
     public void batchEnable(@RequestBody IntentNodeBatchRequest requestParam) {
-        intentTreeService.batchEnableNodes(requestParam.getIds());
+        intentTreeService.batchEnableNodes(requestParam == null ? null : requestParam.getIds());
     }
 
     /**
@@ -90,7 +90,7 @@ public class IntentTreeController {
      */
     @PostMapping("/intent-tree/batch/disable")
     public void batchDisable(@RequestBody IntentNodeBatchRequest requestParam) {
-        intentTreeService.batchDisableNodes(requestParam.getIds());
+        intentTreeService.batchDisableNodes(requestParam == null ? null : requestParam.getIds());
     }
 
     /**
@@ -98,6 +98,6 @@ public class IntentTreeController {
      */
     @PostMapping("/intent-tree/batch/delete")
     public void batchDelete(@RequestBody IntentNodeBatchRequest requestParam) {
-        intentTreeService.batchDeleteNodes(requestParam.getIds());
+        intentTreeService.batchDeleteNodes(requestParam == null ? null : requestParam.getIds());
     }
 }

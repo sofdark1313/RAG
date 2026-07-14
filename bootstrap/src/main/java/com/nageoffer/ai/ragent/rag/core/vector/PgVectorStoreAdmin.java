@@ -36,6 +36,7 @@ public class PgVectorStoreAdmin implements VectorStoreAdmin {
 
     @Override
     public void ensureVectorSpace(VectorSpaceSpec spec) {
+        normalizeLogicalName(spec == null ? null : spec.getSpaceId());
         String indexName = "idx_kv_embedding_hnsw";
 
         // noinspection SqlDialectInspection,SqlNoDataSourceInspection
@@ -53,6 +54,7 @@ public class PgVectorStoreAdmin implements VectorStoreAdmin {
 
     @Override
     public boolean vectorSpaceExists(VectorSpaceId spaceId) {
+        normalizeLogicalName(spaceId);
         try {
             // noinspection SqlDialectInspection,SqlNoDataSourceInspection
             jdbcTemplate.queryForObject("SELECT COUNT(*) FROM t_knowledge_vector LIMIT 1", Integer.class);
@@ -60,5 +62,11 @@ public class PgVectorStoreAdmin implements VectorStoreAdmin {
         } catch (Exception e) {
             return false;
         }
+    }
+
+    private String normalizeLogicalName(VectorSpaceId spaceId) {
+        return VectorSpaceNames.normalizeRequiredLogicalName(
+                spaceId == null ? null : spaceId.getLogicalName(),
+                "向量空间名称");
     }
 }

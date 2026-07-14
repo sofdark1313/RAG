@@ -203,10 +203,11 @@ public class MinerUResultUnpacker {
                 // 转为浏览器可直连的公开 URL(asset-bucket 已开公共读)，供 markdown 图片链接固化入库
                 String publicUrl = fileStorageService.getPublicUrl(stored.getUrl());
                 result.put(zipPath, publicUrl);
-                log.debug("MinerU 图片上传 zipPath={} → {}", zipPath, publicUrl);
+                log.debug("MinerU 图片上传成功: zipPathLength={}, urlLength={}",
+                        lengthOf(zipPath), lengthOf(publicUrl));
             } catch (Exception ex) {
-                log.error("MinerU 图片上传失败 zipPath={}", zipPath, ex);
-                throw new ServiceException("MinerU 图片上传失败 " + zipPath + ": " + ex.getMessage());
+                log.error("MinerU 图片上传失败: zipPathLength={}", lengthOf(zipPath), ex);
+                throw new ServiceException("MinerU 图片上传失败: " + ex.getMessage());
             }
         }
         return result;
@@ -215,6 +216,10 @@ public class MinerUResultUnpacker {
     private static String extractExt(String path) {
         int idx = path.lastIndexOf('.');
         return idx >= 0 ? path.substring(idx + 1).toLowerCase(Locale.ROOT) : "bin";
+    }
+
+    private static int lengthOf(String value) {
+        return value == null ? 0 : value.length();
     }
 
     private static String inferMime(String ext) {

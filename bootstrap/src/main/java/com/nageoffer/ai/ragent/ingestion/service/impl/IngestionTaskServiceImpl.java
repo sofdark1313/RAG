@@ -34,6 +34,7 @@ import com.nageoffer.ai.ragent.ingestion.dao.mapper.IngestionTaskMapper;
 import com.nageoffer.ai.ragent.ingestion.dao.mapper.IngestionTaskNodeMapper;
 import com.nageoffer.ai.ragent.framework.context.UserContext;
 import com.nageoffer.ai.ragent.framework.exception.ClientException;
+import com.nageoffer.ai.ragent.framework.web.PageRequests;
 import com.nageoffer.ai.ragent.ingestion.domain.context.DocumentSource;
 import com.nageoffer.ai.ragent.ingestion.domain.context.IngestionContext;
 import com.nageoffer.ai.ragent.ingestion.domain.context.NodeLog;
@@ -46,6 +47,7 @@ import com.nageoffer.ai.ragent.ingestion.domain.result.IngestionResult;
 import com.nageoffer.ai.ragent.ingestion.engine.IngestionEngine;
 import com.nageoffer.ai.ragent.ingestion.util.MimeTypeDetector;
 import com.nageoffer.ai.ragent.rag.core.vector.VectorSpaceId;
+import com.nageoffer.ai.ragent.rag.core.vector.VectorSpaceNames;
 import com.nageoffer.ai.ragent.ingestion.service.IngestionPipelineService;
 import com.nageoffer.ai.ragent.ingestion.service.IngestionTaskService;
 import lombok.RequiredArgsConstructor;
@@ -70,6 +72,15 @@ import java.util.Set;
 @RequiredArgsConstructor
 public class IngestionTaskServiceImpl implements IngestionTaskService {
 
+    private static final int MAX_PIPELINE_ID_LENGTH = 20;
+    private static final int MAX_ID_LENGTH = 20;
+    private static final int MAX_SOURCE_LOCATION_LENGTH = 1024;
+    private static final int MAX_SOURCE_FILE_NAME_LENGTH = 256;
+    private static final int MAX_CREDENTIAL_COUNT = 20;
+    private static final int MAX_CREDENTIAL_KEY_LENGTH = 64;
+    private static final int MAX_CREDENTIAL_VALUE_LENGTH = 4096;
+    private static final int MAX_VECTOR_SPACE_FIELD_LENGTH = 64;
+
     private final IngestionEngine engine;
     private final IngestionPipelineService pipelineService;
     private final IngestionTaskMapper taskMapper;
@@ -81,7 +92,7 @@ public class IngestionTaskServiceImpl implements IngestionTaskService {
     public IngestionResult execute(IngestionTaskCreateRequest request) {
         Assert.notNull(request, () -> new ClientException("请求不能为空"));
         DocumentSource source = toSource(request.getSource());
-        return executeInternal(request.getPipelineId(), source, null, null, request.getVectorSpaceId());
+        return executeInternal(request.getPipelineId(), source, null, null, normalizeVectorSpaceId(request.getVectorSpaceId()));
     }
 
     @Override
@@ -90,7 +101,7 @@ public class IngestionTaskServiceImpl implements IngestionTaskService {
         Assert.notNull(file, () -> new ClientException("文件不能为空"));
         try {
             byte[] bytes = file.getBytes();
-            String fileName = file.getOriginalFilename();
+            String fileName = normalizeOptionalText(file.getOriginalFilename(), MAX_SOURCE_FILE_NAME_LENGTH, "文件名");
             if (!StringUtils.hasText(fileName)) {
                 fileName = "upload.bin";
             }
@@ -101,6 +112,8 @@ public class IngestionTaskServiceImpl implements IngestionTaskService {
                     .fileName(fileName)
                     .build();
             return executeInternal(pipelineId, source, bytes, mimeType, null);
+        } catch (ClientException e) {
+            throw e;
         } catch (Exception e) {
             throw new ClientException("读取上传文件失败: " + e.getMessage());
         }
@@ -108,15 +121,16 @@ public class IngestionTaskServiceImpl implements IngestionTaskService {
 
     @Override
     public IngestionTaskVO get(String taskId) {
-        IngestionTaskDO task = taskMapper.selectById(taskId);
+        String normalizedTaskId = normalizeRequiredId(taskId, "任务ID");
+        IngestionTaskDO task = taskMapper.selectById(normalizedTaskId);
         Assert.notNull(task, () -> new ClientException("未找到任务"));
         return toVO(task);
     }
 
     @Override
     public IPage<IngestionTaskVO> page(Page<IngestionTaskVO> page, String status) {
-        Page<IngestionTaskDO> mpPage = new Page<>(page.getCurrent(), page.getSize());
-        String normalizedStatus = normalizeStatus(status);
+        Page<IngestionTaskDO> mpPage = PageRequests.from(page);
+        String normalizedStatus = normalizeStatusFilter(status);
         LambdaQueryWrapper<IngestionTaskDO> qw = new LambdaQueryWrapper<IngestionTaskDO>()
                 .eq(IngestionTaskDO::getDeleted, 0)
                 .eq(StringUtils.hasText(normalizedStatus), IngestionTaskDO::getStatus, normalizedStatus)
@@ -129,9 +143,10 @@ public class IngestionTaskServiceImpl implements IngestionTaskService {
 
     @Override
     public List<IngestionTaskNodeVO> listNodes(String taskId) {
+        String normalizedTaskId = normalizeRequiredId(taskId, "任务ID");
         LambdaQueryWrapper<IngestionTaskNodeDO> qw = new LambdaQueryWrapper<IngestionTaskNodeDO>()
                 .eq(IngestionTaskNodeDO::getDeleted, 0)
-                .eq(IngestionTaskNodeDO::getTaskId, taskId)
+                .eq(IngestionTaskNodeDO::getTaskId, normalizedTaskId)
                 .orderByAsc(IngestionTaskNodeDO::getNodeOrder)
                 .orderByAsc(IngestionTaskNodeDO::getId);
         List<IngestionTaskNodeDO> nodes = taskNodeMapper.selectList(qw);
@@ -291,10 +306,11 @@ public class IngestionTaskServiceImpl implements IngestionTaskService {
     }
 
     private String resolvePipelineId(String pipelineId) {
-        if (StringUtils.hasText(pipelineId)) {
-            return pipelineId;
+        String normalizedPipelineId = normalizeRequiredText(pipelineId, MAX_PIPELINE_ID_LENGTH, "流水线ID");
+        if (!normalizedPipelineId.matches("\\d{1,20}")) {
+            throw new ClientException("流水线ID不合法");
         }
-        throw new ClientException("必须传流水线ID");
+        return normalizedPipelineId;
     }
 
     private String normalizeStatus(String status) {
@@ -308,18 +324,88 @@ public class IngestionTaskServiceImpl implements IngestionTaskService {
         }
     }
 
+    private String normalizeStatusFilter(String status) {
+        if (!StringUtils.hasText(status)) {
+            return status;
+        }
+        try {
+            return IngestionStatus.fromValue(status).getValue();
+        } catch (IllegalArgumentException ex) {
+            throw new ClientException("任务状态不合法");
+        }
+    }
+
     private DocumentSource toSource(DocumentSourceRequest request) {
         Assert.notNull(request, () -> new ClientException("文档来源不能为空"));
+        SourceType type = request.getType();
+        String location = normalizeOptionalText(request.getLocation(), MAX_SOURCE_LOCATION_LENGTH, "文档来源位置");
+        String fileName = normalizeOptionalText(request.getFileName(), MAX_SOURCE_FILE_NAME_LENGTH, "文件名");
         DocumentSource source = DocumentSource.builder()
-                .type(request.getType())
-                .location(request.getLocation())
-                .fileName(request.getFileName())
-                .credentials(request.getCredentials())
+                .type(type)
+                .location(location)
+                .fileName(fileName)
+                .credentials(normalizeCredentials(request.getCredentials()))
                 .build();
         if (source.getType() == null) {
             throw new ClientException("文档来源类型不能为空");
         }
+        if (SourceType.FILE != source.getType() && !StringUtils.hasText(location)) {
+            throw new ClientException("文档来源位置不能为空");
+        }
         return source;
+    }
+
+    private VectorSpaceId normalizeVectorSpaceId(VectorSpaceId vectorSpaceId) {
+        if (vectorSpaceId == null) {
+            return null;
+        }
+        return VectorSpaceId.builder()
+                .logicalName(VectorSpaceNames.normalizeOptionalLogicalName(vectorSpaceId.getLogicalName(), "向量空间名称"))
+                .namespace(normalizeOptionalText(vectorSpaceId.getNamespace(), MAX_VECTOR_SPACE_FIELD_LENGTH, "向量空间命名空间"))
+                .build();
+    }
+
+    private Map<String, String> normalizeCredentials(Map<String, String> credentials) {
+        if (credentials == null || credentials.isEmpty()) {
+            return credentials;
+        }
+        if (credentials.size() > MAX_CREDENTIAL_COUNT) {
+            throw new ClientException("凭证项数量不能超过" + MAX_CREDENTIAL_COUNT + "个");
+        }
+        Map<String, String> result = new LinkedHashMap<>();
+        for (Map.Entry<String, String> entry : credentials.entrySet()) {
+            String key = normalizeRequiredText(entry.getKey(), MAX_CREDENTIAL_KEY_LENGTH, "凭证键");
+            String value = normalizeOptionalText(entry.getValue(), MAX_CREDENTIAL_VALUE_LENGTH, "凭证值");
+            result.put(key, value);
+        }
+        return result;
+    }
+
+    private String normalizeRequiredText(String value, int maxLength, String fieldName) {
+        String text = normalizeOptionalText(value, maxLength, fieldName);
+        if (!StringUtils.hasText(text)) {
+            throw new ClientException(fieldName + "不能为空");
+        }
+        return text;
+    }
+
+    private String normalizeRequiredId(String value, String fieldName) {
+        String text = normalizeRequiredText(value, MAX_ID_LENGTH, fieldName);
+        if (!text.matches("\\d{1,20}")) {
+            throw new ClientException(fieldName + "不合法");
+        }
+        return text;
+    }
+
+    private String normalizeOptionalText(String value, int maxLength, String fieldName) {
+        String text = value == null ? null : value.trim();
+        if (!StringUtils.hasText(text)) {
+            return null;
+        }
+        if (text.length() > maxLength) {
+            throw new ClientException(fieldName + "长度不能超过" + maxLength + "个字符");
+        }
+        return text;
     }
 
     private IngestionTaskVO toVO(IngestionTaskDO task) {

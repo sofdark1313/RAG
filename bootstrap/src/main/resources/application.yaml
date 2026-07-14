@@ -15,9 +15,9 @@ spring:
   datasource:
     driver-class-name: org.postgresql.Driver
     type: com.zaxxer.hikari.HikariDataSource
-    username: postgres
-    password: postgres
-    url: jdbc:postgresql://192.168.98.128:5432/ragent?client_encoding=UTF8
+    username: ${RAG_DB_USERNAME:postgres}
+    password: ${RAG_DB_PASSWORD:}
+    url: ${RAG_DB_URL:jdbc:postgresql://localhost:5432/ragent?client_encoding=UTF8}
     hikari:
       connection-timeout: 5000
       idle-timeout: 600000
@@ -28,12 +28,12 @@ spring:
 
   data:
     redis:
-      host: 192.168.98.128
-      port: 6379
-      password: root
+      host: ${RAG_REDIS_HOST:localhost}
+      port: ${RAG_REDIS_PORT:6379}
+      password: ${RAG_REDIS_PASSWORD:}
 
 rocketmq:
-  name-server: 192.168.98.128:9876
+  name-server: ${ROCKETMQ_NAME_SERVER:localhost:9876}
   producer:
     group: ragent-producer${unique-name:}_pg
     send-message-timeout: 2000
@@ -104,6 +104,15 @@ rag:
   trace:
     enabled: true
     max-error-length: 1000
+
+  http-fetch:
+    security:
+      enabled: true
+      allowed-hosts: []
+      allowed-ports:
+        - 80
+        - 443
+      block-private-addresses: true
 
   # 图片解析（图生文）配置
   # 产出一段自包含的知识文本：既说清"图是什么"，又完整保留所有文字与层级
@@ -216,9 +225,9 @@ ai:
         model: qwen-vl-max
 
 rustfs:
-  url: http://192.168.98.128:9000
-  access-key-id: rustfsadmin
-  secret-access-key: rustfsadmin
+  url: ${RUSTFS_URL:http://localhost:9000}
+  access-key-id: ${RUSTFS_ACCESS_KEY_ID:}
+  secret-access-key: ${RUSTFS_SECRET_ACCESS_KEY:}
   # 多模态解析产物 bucket（PDF 抽出来的图片、未来 PNG 原图等）
   # 与用户上传的原始文档 bucket 隔离
   asset-bucket: ragent-assets
@@ -246,5 +255,9 @@ sa-token:
 
 app:
   demo-mode: false
+  cors:
+    allowed-origin-patterns:
+      - ${APP_CORS_ALLOWED_ORIGIN:http://localhost:5173}
+      - http://127.0.0.1:5173
   eval:
-    enabled: true
+    enabled: false

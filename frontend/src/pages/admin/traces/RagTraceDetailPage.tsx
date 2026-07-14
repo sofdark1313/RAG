@@ -61,6 +61,20 @@ const copyToClipboard = (text: string, label: string) => {
 
 type StatusType = "success" | "failed" | "running" | "default";
 
+type TimelineBaseNode = RagTraceDetail["nodes"][number] & {
+  depthValue: number;
+  resolvedDurationMs: number;
+  startTs: number;
+  endTs: number;
+};
+
+type WaterfallTimelineNode = TimelineBaseNode & Pick<TimelineNode, "offsetMs" | "leftPercent" | "widthPercent">;
+
+type TimelineViewModel = {
+  totalWindowMs: number;
+  nodes: WaterfallTimelineNode[];
+};
+
 const STATUS_COLORS: Record<StatusType, { dot: string; bar: string }> = {
   success: { dot: "bg-emerald-500", bar: "bg-emerald-400" },
   failed: { dot: "bg-red-500", bar: "bg-red-400" },
@@ -248,7 +262,7 @@ function NodeDetailCard({
                           node,
                           onClose
                         }: {
-  node: TimelineNode | RagTraceDetail["nodes"][number];
+  node: WaterfallTimelineNode | RagTraceDetail["nodes"][number];
   onClose: () => void;
 }) {
   const nodeStatus = normalizeStatus(node.status);
@@ -388,8 +402,9 @@ export function RagTraceDetailPage() {
       console.error(error);
       setDetail(null);
     } finally {
-      if (detailRequestRef.current !== requestId) return;
-      setDetailLoading(false);
+      if (detailRequestRef.current === requestId) {
+        setDetailLoading(false);
+      }
     }
   };
 
@@ -405,11 +420,11 @@ export function RagTraceDetailPage() {
 
   const selectedRun = detail?.run || null;
 
-  const timeline = useMemo(() => {
+  const timeline = useMemo<TimelineViewModel>(() => {
     const nodes = detail?.nodes || [];
-    if (!nodes.length && !selectedRun) return { totalWindowMs: 0, nodes: [] as any[] };
+    if (!nodes.length && !selectedRun) return { totalWindowMs: 0, nodes: [] };
 
-    const normalized = nodes.map((node) => {
+    const normalized: TimelineBaseNode[] = nodes.map((node) => {
       const startTs = toTimestamp(node.startTime);
       const endTs = toTimestamp(node.endTime);
       const resolvedDurationMs = resolveNodeDuration(node);
@@ -433,7 +448,7 @@ export function RagTraceDetailPage() {
     const resolvedRunEnd = runEndTs ?? (runDuration > 0 ? baseStart + runDuration : maxEnd);
     const windowDuration = Math.max(resolvedRunEnd - baseStart, runDuration, maxEnd - baseStart, 1);
 
-    const rootRow = selectedRun
+    const rootRow: TimelineBaseNode | null = selectedRun
         ? {
           traceId: selectedRun.traceId,
           nodeId: "__root__",
@@ -502,7 +517,7 @@ export function RagTraceDetailPage() {
       }
     }
 
-    const rows = [
+    const rows: WaterfallTimelineNode[] = [
       ...(rootRow ? [rootRow] : []),
       ...ordered
     ].map((node) => {

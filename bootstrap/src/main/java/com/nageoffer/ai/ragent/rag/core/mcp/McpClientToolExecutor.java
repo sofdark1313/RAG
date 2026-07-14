@@ -50,20 +50,39 @@ public class McpClientToolExecutor implements McpToolExecutor {
         try {
             Map<String, Object> args = parameters != null ? parameters : Map.of();
             CallToolResult result = mcpClient.callTool(new CallToolRequest(toolDefinition.name(), args));
-            log.info("MCP 远程工具调用完成, toolId={}, params={}, contentSize={}, elapsed={}ms",
-                    toolDefinition.name(), args,
+            log.info("MCP 远程工具调用完成, toolId={}, paramSummary={}, contentSize={}, elapsed={}ms",
+                    toolDefinition.name(), summarizeParameters(args),
                     result.content() != null ? result.content().size() : 0,
                     System.currentTimeMillis() - startMs);
             return result;
         } catch (Exception e) {
-            String reason = e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName();
-            log.warn("MCP 远程工具调用异常, toolId={}, params={}, elapsed={}ms, reason={}",
-                    toolDefinition.name(), parameters,
+            String reason = sanitizeReason(e.getMessage() != null ? e.getMessage() : e.getClass().getSimpleName());
+            log.warn("MCP 远程工具调用异常, toolId={}, paramSummary={}, elapsed={}ms, reason={}",
+                    toolDefinition.name(), summarizeParameters(parameters),
                     System.currentTimeMillis() - startMs, reason);
             return CallToolResult.builder()
                     .content(List.of(new TextContent("远程调用失败: " + reason)))
                     .isError(true)
                     .build();
         }
+    }
+
+    private String summarizeParameters(Map<String, Object> parameters) {
+        if (parameters == null || parameters.isEmpty()) {
+            return "size=0";
+        }
+        List<String> keys = parameters.keySet().stream()
+                .map(String::valueOf)
+                .limit(20)
+                .toList();
+        return "size=" + parameters.size() + ", keys=" + keys + (parameters.size() > keys.size() ? ", truncated=true" : "");
+    }
+
+    private String sanitizeReason(String reason) {
+        if (reason == null) {
+            return "";
+        }
+        int maxLength = 500;
+        return reason.length() <= maxLength ? reason : reason.substring(0, maxLength) + "...(truncated)";
     }
 }

@@ -18,19 +18,23 @@
 package com.nageoffer.ai.ragent.ingestion.util;
 
 import com.nageoffer.ai.ragent.framework.exception.ServiceException;
+import com.nageoffer.ai.ragent.core.http.HttpUrlSecurityValidator;
 import lombok.RequiredArgsConstructor;
+import okhttp3.HttpUrl;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.Response;
 import okhttp3.ResponseBody;
 import org.springframework.beans.factory.annotation.Qualifier;
 import org.springframework.stereotype.Component;
+import org.springframework.util.StringUtils;
 
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
 import java.net.URL;
 import java.nio.charset.StandardCharsets;
+import java.util.HashMap;
 import java.util.Map;
 
 /**
@@ -42,6 +46,7 @@ public class HttpClientHelper {
 
     @Qualifier("syncHttpClient")
     private final OkHttpClient client;
+    private final HttpUrlSecurityValidator urlSecurityValidator;
 
     public HttpFetchResponse get(String url, Map<String, String> headers) {
         return doGet(url, headers, -1);
@@ -52,12 +57,10 @@ public class HttpClientHelper {
     }
 
     public HttpFetchStream openStream(String url, Map<String, String> headers, long maxBytes) {
-        Request.Builder builder = new Request.Builder().url(url);
-        if (headers != null) {
-            headers.forEach(builder::addHeader);
-        }
+        HttpUrl checkedUrl = urlSecurityValidator.validate(url);
+        Request request = buildRequest(checkedUrl, headers, RequestMethod.GET);
         try {
-            Response response = client.newCall(builder.get().build()).execute();
+            Response response = executeWithRedirects(request, headers, RequestMethod.GET);
             if (!response.isSuccessful()) {
                 String body = response.body() != null ? response.body().string() : "";
                 response.close();
@@ -84,11 +87,9 @@ public class HttpClientHelper {
     }
 
     private HttpFetchResponse doGet(String url, Map<String, String> headers, long maxBytes) {
-        Request.Builder builder = new Request.Builder().url(url);
-        if (headers != null) {
-            headers.forEach(builder::addHeader);
-        }
-        try (Response response = client.newCall(builder.get().build()).execute()) {
+        HttpUrl checkedUrl = urlSecurityValidator.validate(url);
+        Request request = buildRequest(checkedUrl, headers, RequestMethod.GET);
+        try (Response response = executeWithRedirects(request, headers, RequestMethod.GET)) {
             if (!response.isSuccessful()) {
                 String body = response.body() != null ? response.body().string() : "";
                 throw new ServiceException("网络请求失败: " + response.code() + " " + body);
@@ -118,11 +119,9 @@ public class HttpClientHelper {
     }
 
     public HttpHeadResponse head(String url, Map<String, String> headers) {
-        Request.Builder builder = new Request.Builder().url(url);
-        if (headers != null) {
-            headers.forEach(builder::addHeader);
-        }
-        try (Response response = client.newCall(builder.head().build()).execute()) {
+        HttpUrl checkedUrl = urlSecurityValidator.validate(url);
+        Request request = buildRequest(checkedUrl, headers, RequestMethod.HEAD);
+        try (Response response = executeWithRedirects(request, headers, RequestMethod.HEAD)) {
             if (!response.isSuccessful()) {
                 throw new ServiceException("网络请求失败: " + response.code());
             }
@@ -136,6 +135,88 @@ public class HttpClientHelper {
         } catch (IOException e) {
             throw new ServiceException("网络请求失败: " + e.getMessage());
         }
+    }
+
+    private Response executeWithRedirects(Request initialRequest, Map<String, String> headers,
+                                          RequestMethod requestMethod) throws IOException {
+        Request request = initialRequest;
+        Map<String, String> currentHeaders = headers;
+        for (int redirectCount = 0; redirectCount <= 5; redirectCount++) {
+            Response response = secureClient().newCall(request).execute();
+            if (!isRedirect(response.code())) {
+                return response;
+            }
+            String location = response.header("Location");
+            response.close();
+            if (!StringUtils.hasText(location)) {
+                throw new ServiceException("网络请求重定向缺少 Location");
+            }
+            HttpUrl redirectUrl = request.url().resolve(location);
+            if (redirectUrl == null) {
+                throw new ServiceException("网络请求重定向地址不合法");
+            }
+            HttpUrl checkedRedirectUrl = urlSecurityValidator.validate(redirectUrl.toString());
+            currentHeaders = buildRedirectHeaders(currentHeaders, request.url(), checkedRedirectUrl);
+            request = buildRequest(
+                    checkedRedirectUrl,
+                    currentHeaders,
+                    requestMethod
+            );
+        }
+        throw new ServiceException("网络请求重定向次数过多");
+    }
+
+    private OkHttpClient secureClient() {
+        return client.newBuilder()
+                .dns(urlSecurityValidator.secureDns())
+                .followRedirects(false)
+                .followSslRedirects(false)
+                .build();
+    }
+
+    private Request buildRequest(HttpUrl url, Map<String, String> headers, RequestMethod requestMethod) {
+        Request.Builder builder = new Request.Builder().url(url);
+        if (headers != null) {
+            headers.forEach(builder::addHeader);
+        }
+        if (requestMethod == RequestMethod.HEAD) {
+            return builder.head().build();
+        }
+        return builder.get().build();
+    }
+
+    private Map<String, String> buildRedirectHeaders(Map<String, String> headers, HttpUrl previousUrl, HttpUrl nextUrl) {
+        if (headers == null || headers.isEmpty() || sameOrigin(previousUrl, nextUrl)) {
+            return headers;
+        }
+        Map<String, String> filtered = new HashMap<>();
+        headers.forEach((name, value) -> {
+            if (!isSensitiveHeader(name)) {
+                filtered.put(name, value);
+            }
+        });
+        return filtered;
+    }
+
+    private boolean sameOrigin(HttpUrl previousUrl, HttpUrl nextUrl) {
+        return previousUrl.scheme().equals(nextUrl.scheme())
+                && previousUrl.host().equals(nextUrl.host())
+                && previousUrl.port() == nextUrl.port();
+    }
+
+    private boolean isSensitiveHeader(String name) {
+        return "authorization".equalsIgnoreCase(name)
+                || "cookie".equalsIgnoreCase(name)
+                || "proxy-authorization".equalsIgnoreCase(name);
+    }
+
+    private boolean isRedirect(int code) {
+        return code == 300 || code == 301 || code == 302 || code == 303 || code == 307 || code == 308;
+    }
+
+    private enum RequestMethod {
+        GET,
+        HEAD
     }
 
     private String resolveFileName(String disposition, String url) {

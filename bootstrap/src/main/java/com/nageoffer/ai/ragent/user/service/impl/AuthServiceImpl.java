@@ -26,6 +26,7 @@ import com.nageoffer.ai.ragent.user.dao.entity.UserDO;
 import com.nageoffer.ai.ragent.user.dao.mapper.UserMapper;
 import com.nageoffer.ai.ragent.framework.exception.ClientException;
 import com.nageoffer.ai.ragent.user.service.AuthService;
+import com.nageoffer.ai.ragent.user.service.PasswordHashService;
 import lombok.RequiredArgsConstructor;
 import org.springframework.stereotype.Service;
 
@@ -34,23 +35,27 @@ import org.springframework.stereotype.Service;
 public class AuthServiceImpl implements AuthService {
 
     private static final String DEFAULT_AVATAR_URL = "https://avatars.githubusercontent.com/u/583231?v=4";
+    private static final int MAX_USERNAME_LENGTH = 64;
+    private static final int MAX_PASSWORD_LENGTH = 128;
 
     private final UserMapper userMapper;
+    private final PasswordHashService passwordHashService;
 
     @Override
     public LoginVO login(LoginRequest requestParam) {
-        String username = requestParam.getUsername();
-        String password = requestParam.getPassword();
-        if (StrUtil.isBlank(username) || StrUtil.isBlank(password)) {
-            throw new ClientException("用户名或密码不能为空");
+        if (requestParam == null) {
+            throw new ClientException("请求不能为空");
         }
+        String username = normalizeRequiredText(requestParam.getUsername(), MAX_USERNAME_LENGTH, "用户名");
+        String password = normalizeRequiredText(requestParam.getPassword(), MAX_PASSWORD_LENGTH, "密码");
         UserDO user = findByUsername(username);
-        if (user == null || !passwordMatches(password, user.getPassword())) {
+        if (user == null || !passwordHashService.matches(password, user.getPassword())) {
             throw new ClientException("用户名或密码错误");
         }
         if (user.getId() == null) {
             throw new ClientException("用户信息异常");
         }
+        upgradePasswordHashIfNecessary(user, password);
         String loginId = user.getId().toString();
         StpUtil.login(loginId);
         String avatar = StrUtil.isBlank(user.getAvatar()) ? DEFAULT_AVATAR_URL : user.getAvatar();
@@ -73,10 +78,24 @@ public class AuthServiceImpl implements AuthService {
         );
     }
 
-    private boolean passwordMatches(String input, String stored) {
-        if (stored == null) {
-            return input == null;
+    private void upgradePasswordHashIfNecessary(UserDO user, String rawPassword) {
+        if (!passwordHashService.needsRehash(user.getPassword())) {
+            return;
         }
-        return stored.equals(input);
+        UserDO update = new UserDO();
+        update.setId(user.getId());
+        update.setPassword(passwordHashService.hash(rawPassword));
+        userMapper.updateById(update);
+    }
+
+    private String normalizeRequiredText(String value, int maxLength, String fieldName) {
+        String text = StrUtil.trimToNull(value);
+        if (StrUtil.isBlank(text)) {
+            throw new ClientException(fieldName + "不能为空");
+        }
+        if (text.length() > maxLength) {
+            throw new ClientException(fieldName + "长度不能超过" + maxLength + "个字符");
+        }
+        return text;
     }
 }

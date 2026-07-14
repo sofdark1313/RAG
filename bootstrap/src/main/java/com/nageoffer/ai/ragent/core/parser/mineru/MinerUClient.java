@@ -21,8 +21,10 @@ import com.fasterxml.jackson.databind.JsonNode;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.fasterxml.jackson.databind.node.ArrayNode;
 import com.fasterxml.jackson.databind.node.ObjectNode;
+import com.nageoffer.ai.ragent.core.http.HttpUrlSecurityValidator;
 import com.nageoffer.ai.ragent.framework.exception.ServiceException;
 import lombok.extern.slf4j.Slf4j;
+import okhttp3.HttpUrl;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -53,17 +55,21 @@ import java.io.IOException;
 public class MinerUClient {
 
     private static final MediaType JSON_MEDIA = MediaType.parse("application/json; charset=utf-8");
+    private static final int MAX_ERROR_BODY_CHARS = 1000;
 
     private final OkHttpClient httpClient;
     private final ObjectMapper objectMapper;
     private final MinerUProperties properties;
+    private final HttpUrlSecurityValidator urlSecurityValidator;
 
     public MinerUClient(@Qualifier("syncHttpClient") OkHttpClient httpClient,
                         ObjectMapper objectMapper,
-                        MinerUProperties properties) {
+                        MinerUProperties properties,
+                        HttpUrlSecurityValidator urlSecurityValidator) {
         this.httpClient = httpClient;
         this.objectMapper = objectMapper;
         this.properties = properties;
+        this.urlSecurityValidator = urlSecurityValidator;
     }
 
     /**
@@ -103,16 +109,16 @@ public class MinerUClient {
         JsonNode data = root.path("data");
         String batchId = data.path("batch_id").asText(null);
         if (batchId == null || batchId.isBlank()) {
-            throw new ServiceException("MinerU requestUpload 返回缺少 batch_id, body=" + root);
+            throw new ServiceException("MinerU requestUpload 返回缺少 batch_id, " + responseSummary(root));
         }
 
         JsonNode fileUrls = data.path("file_urls");
         if (!fileUrls.isArray() || fileUrls.isEmpty()) {
-            throw new ServiceException("MinerU requestUpload 返回缺少 file_urls, body=" + root);
+            throw new ServiceException("MinerU requestUpload 返回缺少 file_urls, " + responseSummary(root));
         }
         String uploadUrl = fileUrls.get(0).asText(null);
         if (uploadUrl == null || uploadUrl.isBlank()) {
-            throw new ServiceException("MinerU requestUpload 返回的 file_urls[0] 为空, body=" + root);
+            throw new ServiceException("MinerU requestUpload 返回的 file_urls[0] 为空, " + responseSummary(root));
         }
 
         log.info("MinerU 申请上传链接成功 batchId={} fileName={}", batchId, request.fileName());
@@ -137,16 +143,18 @@ public class MinerUClient {
             throw new ServiceException("上传字节不能为空");
         }
         // 预签名 PUT:body 无 Content-Type(传 null),不加 Authorization
+        HttpUrl checkedUploadUrl = urlSecurityValidator.validate(uploadUrl);
         Request httpRequest = new Request.Builder()
-                .url(uploadUrl)
+                .url(checkedUploadUrl)
                 .put(RequestBody.create(content, null))
                 .build();
-        try (Response response = httpClient.newCall(httpRequest).execute()) {
+        try (Response response = secureClient().newCall(httpRequest).execute()) {
             if (!response.isSuccessful()) {
                 String body = readBodySafe(response);
                 throw new ServiceException("MinerU uploadFile 失败 code=" + response.code() + " body=" + body);
             }
-            log.info("MinerU 文件上传成功 size={} url={}", content.length, uploadUrl);
+            log.info("MinerU 文件上传成功 size={} host={} path={}",
+                    content.length, checkedUploadUrl.host(), checkedUploadUrl.encodedPath());
         } catch (IOException e) {
             throw new ServiceException("MinerU uploadFile 网络异常: " + e.getMessage());
         }
@@ -194,8 +202,9 @@ public class MinerUClient {
         if (zipUrl == null || zipUrl.isBlank()) {
             throw new ServiceException("zipUrl 不能为空");
         }
-        Request httpRequest = new Request.Builder().url(zipUrl).get().build();
-        try (Response response = httpClient.newCall(httpRequest).execute()) {
+        HttpUrl checkedZipUrl = urlSecurityValidator.validate(zipUrl);
+        Request httpRequest = new Request.Builder().url(checkedZipUrl).get().build();
+        try (Response response = secureClient().newCall(httpRequest).execute()) {
             if (!response.isSuccessful()) {
                 String body = readBodySafe(response);
                 throw new ServiceException("MinerU downloadZip 失败 code=" + response.code() + " body=" + body);
@@ -219,8 +228,9 @@ public class MinerUClient {
     }
 
     private Request newJsonPost(String url, String jsonBody) {
+        HttpUrl checkedUrl = urlSecurityValidator.validate(url);
         return new Request.Builder()
-                .url(url)
+                .url(checkedUrl)
                 .header("Authorization", "Bearer " + properties.getApiKey())
                 .header("Content-Type", "application/json")
                 .post(RequestBody.create(jsonBody, JSON_MEDIA))
@@ -228,15 +238,16 @@ public class MinerUClient {
     }
 
     private Request newGet(String url) {
+        HttpUrl checkedUrl = urlSecurityValidator.validate(url);
         return new Request.Builder()
-                .url(url)
+                .url(checkedUrl)
                 .header("Authorization", "Bearer " + properties.getApiKey())
                 .get()
                 .build();
     }
 
     private JsonNode executeAndParse(Request request, String opName) {
-        try (Response response = httpClient.newCall(request).execute()) {
+        try (Response response = secureClient().newCall(request).execute()) {
             String body = readBodySafe(response);
             if (!response.isSuccessful()) {
                 throw new ServiceException(String.format(
@@ -250,6 +261,12 @@ public class MinerUClient {
         } catch (IOException e) {
             throw new ServiceException("MinerU " + opName + " 网络异常: " + e.getMessage());
         }
+    }
+
+    private OkHttpClient secureClient() {
+        return httpClient.newBuilder()
+                .dns(urlSecurityValidator.secureDns())
+                .build();
     }
 
     /**
@@ -266,10 +283,23 @@ public class MinerUClient {
         }
     }
 
+    private String responseSummary(JsonNode root) {
+        int code = root.path("code").asInt(-1);
+        String msg = root.path("msg").asText("unknown");
+        return "code=" + code + " msg=" + msg;
+    }
+
     private String readBodySafe(Response response) {
         try {
             ResponseBody body = response.body();
-            return body == null ? "" : body.string();
+            if (body == null) {
+                return "";
+            }
+            String value = body.string();
+            if (value.length() <= MAX_ERROR_BODY_CHARS) {
+                return value;
+            }
+            return value.substring(0, MAX_ERROR_BODY_CHARS) + "...(truncated)";
         } catch (IOException e) {
             return "";
         }

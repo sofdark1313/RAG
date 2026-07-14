@@ -23,6 +23,7 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.nageoffer.ai.ragent.framework.exception.ClientException;
+import com.nageoffer.ai.ragent.framework.web.PageRequests;
 import com.nageoffer.ai.ragent.rag.controller.request.SampleQuestionCreateRequest;
 import com.nageoffer.ai.ragent.rag.controller.request.SampleQuestionPageRequest;
 import com.nageoffer.ai.ragent.rag.controller.request.SampleQuestionUpdateRequest;
@@ -40,18 +41,21 @@ import java.util.List;
 public class SampleQuestionServiceImpl implements SampleQuestionService {
 
     private static final int DEFAULT_LIMIT = 3;
+    private static final int MAX_TITLE_LENGTH = 64;
+    private static final int MAX_DESCRIPTION_LENGTH = 255;
+    private static final int MAX_QUESTION_LENGTH = 255;
+    private static final int MAX_ID_LENGTH = 20;
 
     private final SampleQuestionMapper sampleQuestionMapper;
 
     @Override
     public String create(SampleQuestionCreateRequest requestParam) {
         Assert.notNull(requestParam, () -> new ClientException("请求不能为空"));
-        String question = StrUtil.trimToNull(requestParam.getQuestion());
-        Assert.notBlank(question, () -> new ClientException("示例问题内容不能为空"));
+        String question = normalizeRequiredText(requestParam.getQuestion(), MAX_QUESTION_LENGTH, "示例问题内容");
 
         SampleQuestionDO record = SampleQuestionDO.builder()
-                .title(StrUtil.trimToNull(requestParam.getTitle()))
-                .description(StrUtil.trimToNull(requestParam.getDescription()))
+                .title(normalizeOptionalText(requestParam.getTitle(), MAX_TITLE_LENGTH, "示例问题标题"))
+                .description(normalizeOptionalText(requestParam.getDescription(), MAX_DESCRIPTION_LENGTH, "示例问题描述"))
                 .question(question)
                 .build();
         sampleQuestionMapper.insert(record);
@@ -64,15 +68,13 @@ public class SampleQuestionServiceImpl implements SampleQuestionService {
         SampleQuestionDO record = loadById(id);
 
         if (requestParam.getQuestion() != null) {
-            String question = StrUtil.trimToNull(requestParam.getQuestion());
-            Assert.notBlank(question, () -> new ClientException("示例问题内容不能为空"));
-            record.setQuestion(question);
+            record.setQuestion(normalizeRequiredText(requestParam.getQuestion(), MAX_QUESTION_LENGTH, "示例问题内容"));
         }
         if (requestParam.getTitle() != null) {
-            record.setTitle(StrUtil.trimToNull(requestParam.getTitle()));
+            record.setTitle(normalizeOptionalText(requestParam.getTitle(), MAX_TITLE_LENGTH, "示例问题标题"));
         }
         if (requestParam.getDescription() != null) {
-            record.setDescription(StrUtil.trimToNull(requestParam.getDescription()));
+            record.setDescription(normalizeOptionalText(requestParam.getDescription(), MAX_DESCRIPTION_LENGTH, "示例问题描述"));
         }
 
         sampleQuestionMapper.updateById(record);
@@ -92,8 +94,9 @@ public class SampleQuestionServiceImpl implements SampleQuestionService {
 
     @Override
     public IPage<SampleQuestionVO> pageQuery(SampleQuestionPageRequest requestParam) {
-        String keyword = StrUtil.trimToNull(requestParam.getKeyword());
-        Page<SampleQuestionDO> page = new Page<>(requestParam.getCurrent(), requestParam.getSize());
+        String keyword = normalizeOptionalText(requestParam == null ? null : requestParam.getKeyword(),
+                MAX_QUESTION_LENGTH, "关键词");
+        Page<SampleQuestionDO> page = PageRequests.from(requestParam);
         IPage<SampleQuestionDO> result = sampleQuestionMapper.selectPage(
                 page,
                 Wrappers.lambdaQuery(SampleQuestionDO.class)
@@ -125,9 +128,10 @@ public class SampleQuestionServiceImpl implements SampleQuestionService {
     }
 
     private SampleQuestionDO loadById(String id) {
+        String normalizedId = normalizeRequiredId(id, "示例问题ID");
         SampleQuestionDO record = sampleQuestionMapper.selectOne(
                 Wrappers.lambdaQuery(SampleQuestionDO.class)
-                        .eq(SampleQuestionDO::getId, id)
+                        .eq(SampleQuestionDO::getId, normalizedId)
                         .eq(SampleQuestionDO::getDeleted, 0)
         );
         Assert.notNull(record, () -> new ClientException("示例问题不存在"));
@@ -143,5 +147,30 @@ public class SampleQuestionServiceImpl implements SampleQuestionService {
                 .createTime(record.getCreateTime())
                 .updateTime(record.getUpdateTime())
                 .build();
+    }
+
+    private String normalizeRequiredText(String value, int maxLength, String fieldName) {
+        String text = StrUtil.trimToNull(value);
+        Assert.notBlank(text, () -> new ClientException(fieldName + "不能为空"));
+        if (text.length() > maxLength) {
+            throw new ClientException(fieldName + "长度不能超过" + maxLength + "个字符");
+        }
+        return text;
+    }
+
+    private String normalizeOptionalText(String value, int maxLength, String fieldName) {
+        String text = StrUtil.trimToNull(value);
+        if (text != null && text.length() > maxLength) {
+            throw new ClientException(fieldName + "长度不能超过" + maxLength + "个字符");
+        }
+        return text;
+    }
+
+    private String normalizeRequiredId(String value, String fieldName) {
+        String text = normalizeRequiredText(value, MAX_ID_LENGTH, fieldName);
+        if (!text.matches("\\d{1,20}")) {
+            throw new ClientException(fieldName + "不合法");
+        }
+        return text;
     }
 }

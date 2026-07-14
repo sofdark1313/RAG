@@ -45,7 +45,7 @@ public class MilvusVectorStoreAdmin implements VectorStoreAdmin {
 
     @Override
     public void ensureVectorSpace(VectorSpaceSpec spec) {
-        String logicalName = spec.getSpaceId().getLogicalName();
+        String logicalName = normalizeLogicalName(spec == null ? null : spec.getSpaceId());
         boolean exists = Boolean.TRUE.equals(milvusClient.hasCollection(
                 HasCollectionReq.builder().collectionName(logicalName).build()
         ));
@@ -121,9 +121,15 @@ public class MilvusVectorStoreAdmin implements VectorStoreAdmin {
 
     @Override
     public boolean vectorSpaceExists(VectorSpaceId spaceId) {
-        String logicalName = spaceId.getLogicalName();
+        String logicalName = normalizeLogicalName(spaceId);
         return milvusClient.hasCollection(
                 HasCollectionReq.builder().collectionName(logicalName).build()
         );
+    }
+
+    private String normalizeLogicalName(VectorSpaceId spaceId) {
+        return VectorSpaceNames.normalizeRequiredLogicalName(
+                spaceId == null ? null : spaceId.getLogicalName(),
+                "向量空间名称");
     }
 }

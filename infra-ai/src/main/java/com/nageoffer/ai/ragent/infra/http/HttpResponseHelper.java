@@ -24,7 +24,9 @@ import com.nageoffer.ai.ragent.infra.model.ModelTarget;
 import lombok.NoArgsConstructor;
 import okhttp3.ResponseBody;
 
+import java.io.ByteArrayOutputStream;
 import java.io.IOException;
+import java.io.InputStream;
 import java.nio.charset.StandardCharsets;
 
 /**
@@ -35,6 +37,8 @@ import java.nio.charset.StandardCharsets;
 public final class HttpResponseHelper {
 
     private static final Gson GSON = new Gson();
+    private static final int DEFAULT_BODY_PREVIEW_CHARS = 1000;
+    private static final String TRUNCATED_SUFFIX = "...(truncated)";
 
     /**
      * 读取响应体原始字符串
@@ -44,6 +48,46 @@ public final class HttpResponseHelper {
             return "";
         }
         return new String(body.bytes(), StandardCharsets.UTF_8);
+    }
+
+    /**
+     * 读取响应体预览，避免失败日志和异常消息带出完整模型响应或第三方错误体。
+     */
+    public static String readBodyPreview(ResponseBody body) throws IOException {
+        return readBodyPreview(body, DEFAULT_BODY_PREVIEW_CHARS);
+    }
+
+    /**
+     * 读取响应体预览，最多保留指定字符数。
+     */
+    public static String readBodyPreview(ResponseBody body, int maxChars) throws IOException {
+        if (body == null) {
+            return "";
+        }
+        int safeMaxChars = Math.max(1, maxChars);
+        int maxBytes = safeMaxChars * 4;
+        ByteArrayOutputStream out = new ByteArrayOutputStream(Math.min(maxBytes, 4096));
+        boolean truncated = false;
+        try (InputStream input = body.byteStream()) {
+            byte[] buffer = new byte[512];
+            while (out.size() <= maxBytes) {
+                int remaining = maxBytes + 1 - out.size();
+                int read = input.read(buffer, 0, Math.min(buffer.length, remaining));
+                if (read < 0) {
+                    break;
+                }
+                out.write(buffer, 0, read);
+                if (out.size() > maxBytes) {
+                    truncated = true;
+                    break;
+                }
+            }
+        }
+        String text = out.toString(StandardCharsets.UTF_8);
+        if (text.length() > safeMaxChars) {
+            return text.substring(0, safeMaxChars) + TRUNCATED_SUFFIX;
+        }
+        return truncated ? text + TRUNCATED_SUFFIX : text;
     }
 
     /**

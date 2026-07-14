@@ -32,6 +32,7 @@ import org.springframework.context.annotation.Configuration;
 import jakarta.annotation.PostConstruct;
 import jakarta.annotation.PreDestroy;
 
+import java.net.URI;
 import java.util.ArrayList;
 import java.util.List;
 
@@ -65,7 +66,12 @@ public class McpClientAutoConfiguration {
     private void registerRemoteTools(McpClientProperties.ServerConfig server) {
         String serverName = server.getName();
         String serverUrl = server.getUrl();
-        log.info("连接 MCP Server: name={}, url={}", serverName, serverUrl);
+        if (serverUrl == null || serverUrl.isBlank()) {
+            log.warn("MCP Server [{}] url 为空，跳过工具注册", serverName);
+            return;
+        }
+        serverUrl = serverUrl.trim();
+        log.info("连接 MCP Server: name={}, url={}", serverName, sanitizeUrl(serverUrl));
 
         try {
             String mcpUrl = serverUrl.endsWith("/mcp") ? serverUrl : serverUrl + "/mcp";
@@ -92,6 +98,20 @@ public class McpClientAutoConfiguration {
             }
         } catch (Exception e) {
             log.error("连接 MCP Server [{}] 失败，跳过工具注册，reason={}", serverName, e.getMessage());
+        }
+    }
+
+    private String sanitizeUrl(String url) {
+        try {
+            URI uri = URI.create(url);
+            if (uri.getScheme() == null || uri.getHost() == null) {
+                return "(invalid-url)";
+            }
+            String port = uri.getPort() > 0 ? ":" + uri.getPort() : "";
+            String path = uri.getRawPath() == null ? "" : uri.getRawPath();
+            return uri.getScheme() + "://" + uri.getHost() + port + path;
+        } catch (Exception e) {
+            return "(invalid-url)";
         }
     }
 

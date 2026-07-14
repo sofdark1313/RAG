@@ -18,6 +18,7 @@
 package com.nageoffer.ai.ragent.knowledge.schedule;
 
 import cn.hutool.core.thread.ThreadFactoryBuilder;
+import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.nageoffer.ai.ragent.knowledge.config.KnowledgeScheduleProperties;
 import com.nageoffer.ai.ragent.knowledge.dao.entity.KnowledgeDocumentScheduleDO;
@@ -42,6 +43,8 @@ import java.util.concurrent.atomic.AtomicLong;
 @RequiredArgsConstructor
 public class ScheduleLockManager {
 
+    private static final int MAX_ID_LENGTH = 20;
+
     private final KnowledgeDocumentScheduleMapper scheduleMapper;
     private final KnowledgeScheduleProperties scheduleProperties;
 
@@ -54,47 +57,58 @@ public class ScheduleLockManager {
     );
 
     public ScheduleLockLease tryAcquire(String scheduleId, Date now) {
-        ScheduleLockLease lease = new ScheduleLockLease(scheduleId, nextLockToken());
+        String normalizedScheduleId = normalizeOptionalId(scheduleId);
+        if (normalizedScheduleId == null) {
+            return null;
+        }
+        Date compareTime = now == null ? new Date() : now;
+        ScheduleLockLease lease = new ScheduleLockLease(normalizedScheduleId, nextLockToken());
         int updated = scheduleMapper.update(
                 Wrappers.lambdaUpdate(KnowledgeDocumentScheduleDO.class)
                         .set(KnowledgeDocumentScheduleDO::getLockOwner, lease.lockToken())
                         .set(KnowledgeDocumentScheduleDO::getLockUntil, computeLockUntil())
-                        .eq(KnowledgeDocumentScheduleDO::getId, scheduleId)
+                        .eq(KnowledgeDocumentScheduleDO::getId, normalizedScheduleId)
                         .and(w -> w.isNull(KnowledgeDocumentScheduleDO::getLockUntil)
                                 .or()
-                                .lt(KnowledgeDocumentScheduleDO::getLockUntil, now))
+                                .lt(KnowledgeDocumentScheduleDO::getLockUntil, compareTime))
         );
         return updated > 0 ? lease : null;
     }
 
     public boolean renew(ScheduleLockLease lease) {
-        if (lease == null) {
+        ScheduleLockLease normalizedLease = normalizeLease(lease);
+        if (normalizedLease == null) {
             return false;
         }
         return scheduleMapper.update(
                 Wrappers.lambdaUpdate(KnowledgeDocumentScheduleDO.class)
                         .set(KnowledgeDocumentScheduleDO::getLockUntil, computeLockUntil())
-                        .eq(KnowledgeDocumentScheduleDO::getId, lease.scheduleId())
-                        .eq(KnowledgeDocumentScheduleDO::getLockOwner, lease.lockToken())
+                        .eq(KnowledgeDocumentScheduleDO::getId, normalizedLease.scheduleId())
+                        .eq(KnowledgeDocumentScheduleDO::getLockOwner, normalizedLease.lockToken())
         ) > 0;
     }
 
     public boolean release(ScheduleLockLease lease) {
-        if (lease == null) {
+        ScheduleLockLease normalizedLease = normalizeLease(lease);
+        if (normalizedLease == null) {
             return false;
         }
         return scheduleMapper.update(
                 Wrappers.lambdaUpdate(KnowledgeDocumentScheduleDO.class)
                         .set(KnowledgeDocumentScheduleDO::getLockOwner, null)
                         .set(KnowledgeDocumentScheduleDO::getLockUntil, null)
-                        .eq(KnowledgeDocumentScheduleDO::getId, lease.scheduleId())
-                        .eq(KnowledgeDocumentScheduleDO::getLockOwner, lease.lockToken())
+                        .eq(KnowledgeDocumentScheduleDO::getId, normalizedLease.scheduleId())
+                        .eq(KnowledgeDocumentScheduleDO::getLockOwner, normalizedLease.lockToken())
         ) > 0;
     }
 
     public ScheduleLockHeartbeat startHeartbeat(ScheduleLockLease lease) {
+        ScheduleLockLease normalizedLease = normalizeLease(lease);
+        if (normalizedLease == null) {
+            throw new IllegalArgumentException("Schedule lock lease is invalid");
+        }
         long now = System.currentTimeMillis();
-        ScheduleLockHeartbeat heartbeat = new ScheduleLockHeartbeat(lease, now, effectiveLockMillis());
+        ScheduleLockHeartbeat heartbeat = new ScheduleLockHeartbeat(normalizedLease, now, effectiveLockMillis());
         long intervalMillis = computeHeartbeatIntervalMillis();
         ScheduledFuture<?> future = heartbeatExecutor.scheduleWithFixedDelay(
                 () -> doHeartbeat(heartbeat),
@@ -150,6 +164,28 @@ public class ScheduleLockManager {
 
     private String nextLockToken() {
         return instancePrefix + ":" + UUID.randomUUID();
+    }
+
+    private ScheduleLockLease normalizeLease(ScheduleLockLease lease) {
+        if (lease == null || StrUtil.isBlank(lease.lockToken())) {
+            return null;
+        }
+        String normalizedScheduleId = normalizeOptionalId(lease.scheduleId());
+        if (normalizedScheduleId == null) {
+            return null;
+        }
+        if (normalizedScheduleId.equals(lease.scheduleId())) {
+            return lease;
+        }
+        return new ScheduleLockLease(normalizedScheduleId, lease.lockToken());
+    }
+
+    private String normalizeOptionalId(String value) {
+        String normalized = StrUtil.trimToNull(value);
+        if (normalized == null || normalized.length() > MAX_ID_LENGTH || !normalized.matches("\\d{1,20}")) {
+            return null;
+        }
+        return normalized;
     }
 
     private static String resolveInstancePrefix() {

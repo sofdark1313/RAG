@@ -23,6 +23,7 @@ import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
 import com.nageoffer.ai.ragent.framework.exception.ClientException;
+import com.nageoffer.ai.ragent.framework.web.PageRequests;
 import com.nageoffer.ai.ragent.rag.controller.request.QueryTermMappingCreateRequest;
 import com.nageoffer.ai.ragent.rag.controller.request.QueryTermMappingPageRequest;
 import com.nageoffer.ai.ragent.rag.controller.request.QueryTermMappingUpdateRequest;
@@ -38,24 +39,27 @@ import org.springframework.stereotype.Service;
 @RequiredArgsConstructor
 public class QueryTermMappingAdminServiceImpl implements QueryTermMappingAdminService {
 
+    private static final int EXACT_MATCH_TYPE = 1;
+    private static final int MAX_TERM_LENGTH = 128;
+    private static final int MAX_REMARK_LENGTH = 255;
+    private static final int MAX_ID_LENGTH = 20;
+
     private final QueryTermMappingMapper queryTermMappingMapper;
     private final QueryTermMappingCacheManager queryTermMappingCacheManager;
 
     @Override
     public String create(QueryTermMappingCreateRequest requestParam) {
         Assert.notNull(requestParam, () -> new ClientException("请求不能为空"));
-        String sourceTerm = StrUtil.trimToNull(requestParam.getSourceTerm());
-        String targetTerm = StrUtil.trimToNull(requestParam.getTargetTerm());
-        Assert.notBlank(sourceTerm, () -> new ClientException("原始词不能为空"));
-        Assert.notBlank(targetTerm, () -> new ClientException("目标词不能为空"));
+        String sourceTerm = normalizeRequiredText(requestParam.getSourceTerm(), MAX_TERM_LENGTH, "原始词");
+        String targetTerm = normalizeRequiredText(requestParam.getTargetTerm(), MAX_TERM_LENGTH, "目标词");
 
         QueryTermMappingDO record = new QueryTermMappingDO();
         record.setSourceTerm(sourceTerm);
         record.setTargetTerm(targetTerm);
-        record.setMatchType(requestParam.getMatchType() != null ? requestParam.getMatchType() : 1);
+        record.setMatchType(normalizeMatchType(requestParam.getMatchType()));
         record.setPriority(requestParam.getPriority() != null ? requestParam.getPriority() : 0);
         record.setEnabled(requestParam.getEnabled() != null ? (requestParam.getEnabled() ? 1 : 0) : 1);
-        record.setRemark(StrUtil.trimToNull(requestParam.getRemark()));
+        record.setRemark(normalizeOptionalText(requestParam.getRemark(), MAX_REMARK_LENGTH, "备注"));
 
         queryTermMappingMapper.insert(record);
         queryTermMappingCacheManager.clearCache();
@@ -68,17 +72,13 @@ public class QueryTermMappingAdminServiceImpl implements QueryTermMappingAdminSe
         QueryTermMappingDO record = loadById(id);
 
         if (requestParam.getSourceTerm() != null) {
-            String sourceTerm = StrUtil.trimToNull(requestParam.getSourceTerm());
-            Assert.notBlank(sourceTerm, () -> new ClientException("原始词不能为空"));
-            record.setSourceTerm(sourceTerm);
+            record.setSourceTerm(normalizeRequiredText(requestParam.getSourceTerm(), MAX_TERM_LENGTH, "原始词"));
         }
         if (requestParam.getTargetTerm() != null) {
-            String targetTerm = StrUtil.trimToNull(requestParam.getTargetTerm());
-            Assert.notBlank(targetTerm, () -> new ClientException("目标词不能为空"));
-            record.setTargetTerm(targetTerm);
+            record.setTargetTerm(normalizeRequiredText(requestParam.getTargetTerm(), MAX_TERM_LENGTH, "目标词"));
         }
         if (requestParam.getMatchType() != null) {
-            record.setMatchType(requestParam.getMatchType());
+            record.setMatchType(normalizeMatchType(requestParam.getMatchType()));
         }
         if (requestParam.getPriority() != null) {
             record.setPriority(requestParam.getPriority());
@@ -87,7 +87,7 @@ public class QueryTermMappingAdminServiceImpl implements QueryTermMappingAdminSe
             record.setEnabled(requestParam.getEnabled() ? 1 : 0);
         }
         if (requestParam.getRemark() != null) {
-            record.setRemark(StrUtil.trimToNull(requestParam.getRemark()));
+            record.setRemark(normalizeOptionalText(requestParam.getRemark(), MAX_REMARK_LENGTH, "备注"));
         }
 
         queryTermMappingMapper.updateById(record);
@@ -109,8 +109,9 @@ public class QueryTermMappingAdminServiceImpl implements QueryTermMappingAdminSe
 
     @Override
     public IPage<QueryTermMappingVO> pageQuery(QueryTermMappingPageRequest requestParam) {
-        String keyword = StrUtil.trimToNull(requestParam.getKeyword());
-        Page<QueryTermMappingDO> page = new Page<>(requestParam.getCurrent(), requestParam.getSize());
+        String keyword = normalizeOptionalText(requestParam == null ? null : requestParam.getKeyword(),
+                MAX_TERM_LENGTH, "关键词");
+        Page<QueryTermMappingDO> page = PageRequests.from(requestParam);
         IPage<QueryTermMappingDO> result = queryTermMappingMapper.selectPage(
                 page,
                 Wrappers.lambdaQuery(QueryTermMappingDO.class)
@@ -125,7 +126,8 @@ public class QueryTermMappingAdminServiceImpl implements QueryTermMappingAdminSe
     }
 
     private QueryTermMappingDO loadById(String id) {
-        QueryTermMappingDO record = queryTermMappingMapper.selectById(id);
+        String normalizedId = normalizeRequiredId(id, "映射规则ID");
+        QueryTermMappingDO record = queryTermMappingMapper.selectById(normalizedId);
         Assert.notNull(record, () -> new ClientException("映射规则不存在"));
         return record;
     }
@@ -142,5 +144,40 @@ public class QueryTermMappingAdminServiceImpl implements QueryTermMappingAdminSe
                 .createTime(record.getCreateTime())
                 .updateTime(record.getUpdateTime())
                 .build();
+    }
+
+    private String normalizeRequiredText(String value, int maxLength, String fieldName) {
+        String text = StrUtil.trimToNull(value);
+        Assert.notBlank(text, () -> new ClientException(fieldName + "不能为空"));
+        if (text.length() > maxLength) {
+            throw new ClientException(fieldName + "长度不能超过" + maxLength + "个字符");
+        }
+        return text;
+    }
+
+    private String normalizeOptionalText(String value, int maxLength, String fieldName) {
+        String text = StrUtil.trimToNull(value);
+        if (text != null && text.length() > maxLength) {
+            throw new ClientException(fieldName + "长度不能超过" + maxLength + "个字符");
+        }
+        return text;
+    }
+
+    private Integer normalizeMatchType(Integer matchType) {
+        if (matchType == null) {
+            return EXACT_MATCH_TYPE;
+        }
+        if (matchType != EXACT_MATCH_TYPE) {
+            throw new ClientException("当前仅支持精确匹配");
+        }
+        return matchType;
+    }
+
+    private String normalizeRequiredId(String value, String fieldName) {
+        String text = normalizeRequiredText(value, MAX_ID_LENGTH, fieldName);
+        if (!text.matches("\\d{1,20}")) {
+            throw new ClientException(fieldName + "不合法");
+        }
+        return text;
     }
 }

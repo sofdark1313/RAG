@@ -21,6 +21,7 @@ import cn.hutool.core.lang.Assert;
 import com.nageoffer.ai.ragent.rag.dto.StoredFileDTO;
 import com.nageoffer.ai.ragent.rag.service.FileStorageService;
 import com.nageoffer.ai.ragent.rag.util.FileTypeDetector;
+import com.nageoffer.ai.ragent.rag.util.S3BucketNames;
 import lombok.SneakyThrows;
 import org.apache.tika.Tika;
 import org.springframework.beans.factory.annotation.Value;
@@ -41,6 +42,7 @@ import java.io.InputStream;
 import java.io.OutputStream;
 import java.net.HttpURLConnection;
 import java.net.URI;
+import java.net.URL;
 import java.nio.charset.StandardCharsets;
 import java.time.Duration;
 import java.util.UUID;
@@ -69,11 +71,12 @@ public class S3FileStorageService implements FileStorageService {
     private static final Duration PRESIGN_DURATION = Duration.ofMinutes(10);
     private static final int CONNECT_TIMEOUT_MS = 10_000;
     private static final int READ_TIMEOUT_MS = 60_000;
+    private static final int ERROR_BODY_PREVIEW_CHARS = 1000;
 
     @Override
     @SneakyThrows
     public StoredFileDTO upload(String bucketName, MultipartFile file) {
-        validateBucketName(bucketName);
+        bucketName = validateBucketName(bucketName);
         Assert.isFalse(file == null || file.isEmpty(), "上传文件不能为空");
 
         String originalFilename = file.getOriginalFilename();
@@ -94,7 +97,7 @@ public class S3FileStorageService implements FileStorageService {
     @Override
     @SneakyThrows
     public StoredFileDTO upload(String bucketName, InputStream content, long size, String originalFilename, String contentType) {
-        validateBucketName(bucketName);
+        bucketName = validateBucketName(bucketName);
         Assert.notNull(content, "上传内容不能为空");
         Assert.isTrue(size >= 0, "上传内容大小不能小于 0");
         String detected = resolveContentType(originalFilename, contentType);
@@ -104,7 +107,7 @@ public class S3FileStorageService implements FileStorageService {
     @Override
     @SneakyThrows
     public StoredFileDTO upload(String bucketName, byte[] content, String originalFilename, String contentType) {
-        validateBucketName(bucketName);
+        bucketName = validateBucketName(bucketName);
         Assert.notNull(content, "上传内容不能为空");
         String detected = resolveContentType(originalFilename, contentType);
         // byte[] 本身已在内存中，ByteArrayInputStream 不产生额外拷贝
@@ -126,7 +129,7 @@ public class S3FileStorageService implements FileStorageService {
 
     @Override
     public boolean bucketExists(String bucket) {
-        validateBucketName(bucket);
+        bucket = validateBucketName(bucket);
         try {
             s3Client.headBucket(b -> b.bucket(bucket));
             return true;
@@ -143,7 +146,7 @@ public class S3FileStorageService implements FileStorageService {
 
     @Override
     public void createBucket(String bucket) {
-        validateBucketName(bucket);
+        bucket = validateBucketName(bucket);
         try {
             s3Client.createBucket(b -> b.bucket(bucket));
         } catch (BucketAlreadyOwnedByYouException e) {
@@ -163,7 +166,7 @@ public class S3FileStorageService implements FileStorageService {
 
     @Override
     public void setBucketPublicReadOnly(String bucket) {
-        validateBucketName(bucket);
+        bucket = validateBucketName(bucket);
         // 匿名只读策略：允许任意 Principal GetObject,使桶内对象可被浏览器直连预览
         String policy = """
                 {"Version":"2012-10-17","Statement":[{"Effect":"Allow",\
@@ -210,7 +213,7 @@ public class S3FileStorageService implements FileStorageService {
     @SneakyThrows
     public StoredFileDTO reliableUpload(String bucketName, InputStream content, long size,
                                         String originalFilename, String contentType) {
-        validateBucketName(bucketName);
+        bucketName = validateBucketName(bucketName);
         Assert.notNull(content, "上传内容不能为空");
         Assert.isTrue(size >= 0, "上传内容大小不能小于 0");
         String detected = resolveContentType(originalFilename, contentType);
@@ -260,16 +263,26 @@ public class S3FileStorageService implements FileStorageService {
                 String errorBody = readErrorStream(conn);
                 throw new IOException(String.format(
                         "S3 流式上传失败: HTTP %d, url=%s, body=%s",
-                        code, presignedReq.url(), errorBody));
+                        code, sanitizeUrl(presignedReq.url()), errorBody));
             }
         } finally {
             conn.disconnect();
         }
     }
 
+    private String sanitizeUrl(URL url) {
+        String port = url.getPort() > 0 ? ":" + url.getPort() : "";
+        return url.getProtocol() + "://" + url.getHost() + port + url.getPath();
+    }
+
     private String readErrorStream(HttpURLConnection conn) {
         try (InputStream err = conn.getErrorStream()) {
-            return err != null ? new String(err.readAllBytes(), StandardCharsets.UTF_8) : "(empty)";
+            if (err == null) {
+                return "(empty)";
+            }
+            byte[] bytes = err.readNBytes(ERROR_BODY_PREVIEW_CHARS + 1);
+            String body = new String(bytes, 0, Math.min(bytes.length, ERROR_BODY_PREVIEW_CHARS), StandardCharsets.UTF_8);
+            return bytes.length > ERROR_BODY_PREVIEW_CHARS ? body + "...(truncated)" : body;
         } catch (IOException e) {
             return "(read error: " + e.getMessage() + ")";
         }
@@ -289,6 +302,7 @@ public class S3FileStorageService implements FileStorageService {
         if (bucket == null || bucket.isBlank()) {
             throw new IllegalArgumentException("Invalid s3 url (bucket missing): " + url);
         }
+        bucket = validateBucketName(bucket);
         String key = (path != null && path.startsWith("/")) ? path.substring(1) : path;
         if (key == null || key.isBlank()) {
             throw new IllegalArgumentException("Invalid s3 url (key missing): " + url);
@@ -312,8 +326,8 @@ public class S3FileStorageService implements FileStorageService {
         return suffix.isBlank() ? key : key + "." + suffix;
     }
 
-    private void validateBucketName(String bucketName) {
-        Assert.notBlank(bucketName, "bucketName 不能为空");
+    private String validateBucketName(String bucketName) {
+        return S3BucketNames.normalizeRequiredBucketName(bucketName, "bucketName");
     }
 
     private StoredFileDTO buildStoredFileDTO(String url, String originalFilename,

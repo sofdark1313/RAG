@@ -23,6 +23,9 @@ import cn.hutool.json.JSONUtil;
 import com.baomidou.mybatisplus.core.conditions.query.LambdaQueryWrapper;
 import com.baomidou.mybatisplus.core.metadata.IPage;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
+import com.baomidou.mybatisplus.extension.plugins.pagination.Page;
+import com.nageoffer.ai.ragent.framework.exception.ClientException;
+import com.nageoffer.ai.ragent.framework.web.PageRequests;
 import com.nageoffer.ai.ragent.rag.controller.request.RagTraceRunPageRequest;
 import com.nageoffer.ai.ragent.rag.controller.vo.RagTraceDetailVO;
 import com.nageoffer.ai.ragent.rag.controller.vo.RagTraceNodeVO;
@@ -39,6 +42,7 @@ import org.springframework.stereotype.Service;
 
 import java.util.Collections;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Set;
@@ -51,6 +55,10 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class RagTraceQueryServiceImpl implements RagTraceQueryService {
 
+    private static final int MAX_TRACE_ID_LENGTH = 64;
+    private static final int MAX_ID_LENGTH = 20;
+    private static final int MAX_STATUS_LENGTH = 16;
+
     private final RagTraceRunMapper runMapper;
     private final RagTraceNodeMapper nodeMapper;
     private final UserMapper userMapper;
@@ -60,20 +68,26 @@ public class RagTraceQueryServiceImpl implements RagTraceQueryService {
         LambdaQueryWrapper<RagTraceRunDO> wrapper = Wrappers.lambdaQuery(RagTraceRunDO.class)
                 .orderByDesc(RagTraceRunDO::getStartTime);
 
-        if (StrUtil.isNotBlank(request.getTraceId())) {
-            wrapper.eq(RagTraceRunDO::getTraceId, request.getTraceId());
+        String traceId = normalizeOptionalText(request == null ? null : request.getTraceId(), MAX_TRACE_ID_LENGTH, "TraceId");
+        String normalizedConversationId = normalizeOptionalId(request == null ? null : request.getConversationId(), "会话ID");
+        String normalizedTaskId = normalizeOptionalId(request == null ? null : request.getTaskId(), "任务ID");
+        String status = normalizeStatusFilter(request == null ? null : request.getStatus());
+
+        if (StrUtil.isNotBlank(traceId)) {
+            wrapper.eq(RagTraceRunDO::getTraceId, traceId);
         }
-        if (StrUtil.isNotBlank(request.getConversationId())) {
-            wrapper.eq(RagTraceRunDO::getConversationId, request.getConversationId());
+        if (StrUtil.isNotBlank(normalizedConversationId)) {
+            wrapper.eq(RagTraceRunDO::getConversationId, normalizedConversationId);
         }
-        if (StrUtil.isNotBlank(request.getTaskId())) {
-            wrapper.eq(RagTraceRunDO::getTaskId, request.getTaskId());
+        if (StrUtil.isNotBlank(normalizedTaskId)) {
+            wrapper.eq(RagTraceRunDO::getTaskId, normalizedTaskId);
         }
-        if (StrUtil.isNotBlank(request.getStatus())) {
-            wrapper.eq(RagTraceRunDO::getStatus, request.getStatus());
+        if (StrUtil.isNotBlank(status)) {
+            wrapper.eq(RagTraceRunDO::getStatus, status);
         }
 
-        IPage<RagTraceRunDO> pageResult = runMapper.selectPage(request, wrapper);
+        Page<RagTraceRunDO> page = PageRequests.from(request);
+        IPage<RagTraceRunDO> pageResult = runMapper.selectPage(page, wrapper);
         Map<String, String> usernameMap = loadUsernameMap(pageResult.getRecords());
         Map<String, Long> ttftMap = loadTtftMap(pageResult.getRecords());
         return pageResult.convert(run -> toRunVO(run, usernameMap, ttftMap));
@@ -81,8 +95,9 @@ public class RagTraceQueryServiceImpl implements RagTraceQueryService {
 
     @Override
     public RagTraceDetailVO detail(String traceId) {
+        String normalizedTraceId = normalizeRequiredText(traceId, MAX_TRACE_ID_LENGTH, "TraceId");
         RagTraceRunDO run = runMapper.selectOne(Wrappers.lambdaQuery(RagTraceRunDO.class)
-                .eq(RagTraceRunDO::getTraceId, traceId)
+                .eq(RagTraceRunDO::getTraceId, normalizedTraceId)
                 .last("limit 1"));
         if (run == null) {
             return null;
@@ -91,14 +106,15 @@ public class RagTraceQueryServiceImpl implements RagTraceQueryService {
         Map<String, Long> ttftMap = loadTtftMap(List.of(run));
         return RagTraceDetailVO.builder()
                 .run(toRunVO(run, usernameMap, ttftMap))
-                .nodes(listNodes(traceId))
+                .nodes(listNodes(normalizedTraceId))
                 .build();
     }
 
     @Override
     public List<RagTraceNodeVO> listNodes(String traceId) {
+        String normalizedTraceId = normalizeRequiredText(traceId, MAX_TRACE_ID_LENGTH, "TraceId");
         List<RagTraceNodeDO> nodes = nodeMapper.selectList(Wrappers.lambdaQuery(RagTraceNodeDO.class)
-                .eq(RagTraceNodeDO::getTraceId, traceId)
+                .eq(RagTraceNodeDO::getTraceId, normalizedTraceId)
                 .orderByAsc(RagTraceNodeDO::getStartTime)
                 .orderByAsc(RagTraceNodeDO::getId));
         return nodes.stream().map(this::toNodeVO).toList();
@@ -189,6 +205,43 @@ public class RagTraceQueryServiceImpl implements RagTraceQueryService {
         } catch (Exception ignored) {
             return null;
         }
+    }
+
+    private String normalizeStatusFilter(String status) {
+        String text = normalizeOptionalText(status, MAX_STATUS_LENGTH, "状态");
+        if (StrUtil.isBlank(text)) {
+            return null;
+        }
+        String normalized = text.toUpperCase(Locale.ROOT);
+        if ("RUNNING".equals(normalized) || "SUCCESS".equals(normalized)
+                || "ERROR".equals(normalized) || "CANCELLED".equals(normalized)) {
+            return normalized;
+        }
+        throw new ClientException("Trace 状态不合法");
+    }
+
+    private String normalizeOptionalText(String value, int maxLength, String fieldName) {
+        String text = StrUtil.trimToNull(value);
+        if (text != null && text.length() > maxLength) {
+            throw new ClientException(fieldName + "长度不能超过" + maxLength + "个字符");
+        }
+        return text;
+    }
+
+    private String normalizeRequiredText(String value, int maxLength, String fieldName) {
+        String text = normalizeOptionalText(value, maxLength, fieldName);
+        if (StrUtil.isBlank(text)) {
+            throw new ClientException(fieldName + "不能为空");
+        }
+        return text;
+    }
+
+    private String normalizeOptionalId(String value, String fieldName) {
+        String text = normalizeOptionalText(value, MAX_ID_LENGTH, fieldName);
+        if (text != null && !text.matches("\\d{1,20}")) {
+            throw new ClientException(fieldName + "不合法");
+        }
+        return text;
     }
 
     private String resolveUsername(String userId, Map<String, String> usernameMap) {

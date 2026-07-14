@@ -115,8 +115,9 @@ public class BaiLianRerankClient implements RerankClient {
         JsonObject respJson;
         try (Response response = httpClient.newCall(request).execute()) {
             if (!response.isSuccessful()) {
-                String body = HttpResponseHelper.readBody(response.body());
-                log.warn("{} rerank 请求失败: status={}, body={}", provider(), response.code(), body);
+                String responsePreview = HttpResponseHelper.readBodyPreview(response.body());
+                log.warn("{} rerank 请求失败: status={}, responsePreviewLength={}",
+                        provider(), response.code(), responsePreview.length());
                 throw new ModelClientException(
                         provider() + " rerank 请求失败: HTTP " + response.code(),
                         ModelClientErrorType.fromHttpStatus(response.code()),

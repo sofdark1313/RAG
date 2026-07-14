@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useRef, useState } from "react";
+import { lazy, Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useLocation, useNavigate, useParams } from "react-router-dom";
 import { Check, FileUp, FileImage, PlayCircle, RefreshCw, Trash2, Pencil, FileBarChart, X, Eye, MoreHorizontal, FileText, FileSpreadsheet, Link as LinkIcon, Download } from "lucide-react";
 import { toast } from "sonner";
@@ -310,7 +310,7 @@ export function KnowledgeDocumentsPage() {
     }
   };
 
-  const loadKnowledgeBase = async () => {
+  const loadKnowledgeBase = useCallback(async () => {
     if (!kbId) return;
     try {
       const data = await getKnowledgeBase(kbId);
@@ -319,9 +319,9 @@ export function KnowledgeDocumentsPage() {
       toast.error(getErrorMessage(error, "加载知识库失败"));
       console.error(error);
     }
-  };
+  }, [kbId]);
 
-  const loadDocuments = async (page = current, status = statusFilter, keywordValue = keyword) => {
+  const loadDocuments = useCallback(async (page = current, status = statusFilter, keywordValue = keyword) => {
     if (!kbId) return;
     setLoading(true);
     try {
@@ -338,15 +338,15 @@ export function KnowledgeDocumentsPage() {
     } finally {
       setLoading(false);
     }
-  };
+  }, [current, kbId, keyword, statusFilter]);
 
   useEffect(() => {
     loadKnowledgeBase();
-  }, [kbId]);
+  }, [loadKnowledgeBase]);
 
   useEffect(() => {
     loadDocuments();
-  }, [kbId, current, statusFilter, keyword]);
+  }, [loadDocuments]);
 
   useEffect(() => {
     if (detailTarget) {
@@ -1483,7 +1483,8 @@ const uploadSchema = z
     }
   });
 
-type UploadFormValues = z.infer<typeof uploadSchema>;
+type UploadFormInput = z.input<typeof uploadSchema>;
+type UploadFormValues = z.output<typeof uploadSchema>;
 
 function UploadDialog({ open, onOpenChange, onSubmit }: UploadDialogProps) {
   const [file, setFile] = useState<File | null>(null);
@@ -1497,7 +1498,7 @@ function UploadDialog({ open, onOpenChange, onSubmit }: UploadDialogProps) {
   const [loadingPipelines, setLoadingPipelines] = useState(false);
   const [maxFileSize, setMaxFileSize] = useState<number>(50 * 1024 * 1024);
 
-  const form = useForm<UploadFormValues>({
+  const form = useForm<UploadFormInput, unknown, UploadFormValues>({
     resolver: zodResolver(uploadSchema),
     defaultValues: {
       sourceType: "file",
@@ -1691,11 +1692,11 @@ function UploadDialog({ open, onOpenChange, onSubmit }: UploadDialogProps) {
       const payload: KnowledgeDocumentUploadPayload = {
         sourceType: values.sourceType,
         file: values.sourceType === "file" ? file : null,
-        sourceLocation: values.sourceType === "url" ? values.sourceLocation.trim() : null,
+        sourceLocation: values.sourceType === "url" ? (values.sourceLocation?.trim() ?? "") : null,
         scheduleEnabled: values.sourceType === "url" ? values.scheduleEnabled : false,
         scheduleCron:
           values.sourceType === "url" && values.scheduleEnabled
-            ? values.scheduleCron.trim()
+            ? (values.scheduleCron?.trim() ?? "")
             : null,
         processMode: values.processMode,
         chunkStrategy:

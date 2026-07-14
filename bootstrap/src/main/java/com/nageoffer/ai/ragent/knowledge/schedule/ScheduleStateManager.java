@@ -36,6 +36,7 @@ import java.util.Date;
 @RequiredArgsConstructor
 public class ScheduleStateManager {
 
+    private static final int MAX_ID_LENGTH = 20;
     private static final String LEASE_LOST_NOTE = "（调度锁已失效，未写回调度状态）";
 
     private final KnowledgeDocumentScheduleMapper scheduleMapper;
@@ -204,11 +205,15 @@ public class ScheduleStateManager {
     }
 
     private boolean updateScheduleIfOwned(ScheduleLockLease lease,
-                                          LambdaUpdateWrapper<KnowledgeDocumentScheduleDO> updateWrapper) {
-        if (lease == null || updateWrapper == null) {
+                                           LambdaUpdateWrapper<KnowledgeDocumentScheduleDO> updateWrapper) {
+        if (lease == null || updateWrapper == null || !StringUtils.hasText(lease.lockToken())) {
             return false;
         }
-        updateWrapper.eq(KnowledgeDocumentScheduleDO::getId, lease.scheduleId())
+        String normalizedScheduleId = normalizeOptionalId(lease.scheduleId());
+        if (normalizedScheduleId == null) {
+            return false;
+        }
+        updateWrapper.eq(KnowledgeDocumentScheduleDO::getId, normalizedScheduleId)
                 .eq(KnowledgeDocumentScheduleDO::getLockOwner, lease.lockToken());
         return scheduleMapper.update(updateWrapper) > 0;
     }
@@ -230,5 +235,16 @@ public class ScheduleStateManager {
             return trimmed;
         }
         return trimmed.substring(0, 512);
+    }
+
+    private String normalizeOptionalId(String value) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        String normalized = value.trim();
+        if (normalized.length() > MAX_ID_LENGTH || !normalized.matches("\\d{1,20}")) {
+            return null;
+        }
+        return normalized;
     }
 }

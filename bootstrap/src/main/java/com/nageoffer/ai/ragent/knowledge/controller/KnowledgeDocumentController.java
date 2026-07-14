@@ -51,7 +51,9 @@ import java.io.InputStream;
 import java.net.URLEncoder;
 import java.nio.charset.StandardCharsets;
 import java.util.List;
+import java.util.Locale;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * 知识库文档管理控制器
@@ -75,9 +77,10 @@ public class KnowledgeDocumentController {
             Map.entry("xlsx", "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"),
             Map.entry("png", "image/png"),
             Map.entry("jpg", "image/jpeg"),
-            Map.entry("jpeg", "image/jpeg"),
-            Map.entry("svg", "image/svg+xml")
+            Map.entry("jpeg", "image/jpeg")
     );
+    private static final Set<String> INLINE_FILE_TYPES = Set.of(
+            "pdf", "markdown", "md", "txt", "csv", "png", "jpg", "jpeg");
 
     /**
      * 上传文档：入库记录 + 文件落盘，返回文档ID
@@ -176,12 +179,20 @@ public class KnowledgeDocumentController {
     @GetMapping("/knowledge-base/docs/{docId}/file")
     public void file(@PathVariable String docId, HttpServletResponse response) throws Exception {
         var doc = documentService.get(docId);
-        String fileType = doc.getFileType() != null ? doc.getFileType().toLowerCase() : "";
-        String contentType = CONTENT_TYPE_MAP.getOrDefault(fileType, "application/octet-stream");
+        String fileType = doc.getFileType() != null ? doc.getFileType().toLowerCase(Locale.ROOT) : "";
+        String contentType = CONTENT_TYPE_MAP.getOrDefault(fileType, MediaType.APPLICATION_OCTET_STREAM_VALUE);
         response.setContentType(contentType);
-        response.setHeader("Content-Disposition", "inline; filename=\"" + URLEncoder.encode(doc.getDocName(), StandardCharsets.UTF_8) + "\"");
+        response.setHeader("X-Content-Type-Options", "nosniff");
+        response.setHeader("Content-Disposition", contentDisposition(INLINE_FILE_TYPES.contains(fileType), doc.getDocName()));
         try (InputStream in = fileStorageService.openStream(doc.getFileUrl())) {
             StreamUtils.copy(in, response.getOutputStream());
         }
+    }
+
+    private static String contentDisposition(boolean inline, String fileName) {
+        String disposition = inline ? "inline" : "attachment";
+        String encoded = URLEncoder.encode(fileName == null ? "download" : fileName, StandardCharsets.UTF_8)
+                .replace("+", "%20");
+        return disposition + "; filename=\"" + encoded + "\"; filename*=UTF-8''" + encoded;
     }
 }

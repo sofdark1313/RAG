@@ -20,6 +20,7 @@ package com.nageoffer.ai.ragent.user.config;
 import cn.dev33.satoken.interceptor.SaInterceptor;
 import cn.dev33.satoken.stp.StpUtil;
 import com.nageoffer.ai.ragent.rag.config.DemoModeInterceptor;
+import com.nageoffer.ai.ragent.user.enums.UserRole;
 import jakarta.servlet.DispatcherType;
 import jakarta.servlet.http.HttpServletRequest;
 import lombok.RequiredArgsConstructor;
@@ -29,6 +30,8 @@ import org.springframework.web.context.request.ServletRequestAttributes;
 import org.springframework.web.servlet.config.annotation.InterceptorRegistry;
 import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 
+import java.util.List;
+
 /**
  * SaToken 配置类
  * 配置登录拦截和用户上下文拦截器
@@ -36,6 +39,19 @@ import org.springframework.web.servlet.config.annotation.WebMvcConfigurer;
 @Configuration
 @RequiredArgsConstructor
 public class SaTokenConfig implements WebMvcConfigurer {
+
+    private static final List<String> ADMIN_PATH_PREFIXES = List.of(
+            "/admin",
+            "/knowledge-base",
+            "/ingestion",
+            "/intent-tree",
+            "/mappings",
+            "/rag/traces",
+            "/rag/settings",
+            "/rag/eval",
+            "/sample-questions",
+            "/users"
+    );
 
     /**
      * 体验环境只读模式拦截器
@@ -71,6 +87,9 @@ public class SaTokenConfig implements WebMvcConfigurer {
                     }
                     // 执行登录检查
                     StpUtil.checkLogin();
+                    if (isAdminPath(attrs)) {
+                        StpUtil.checkRole(UserRole.ADMIN.getCode());
+                    }
                 }))
                 // 拦截所有路径
                 .addPathPatterns("/**")
@@ -90,5 +109,14 @@ public class SaTokenConfig implements WebMvcConfigurer {
                 .addPathPatterns("/**")
                 // 排除认证相关路径和错误页面
                 .excludePathPatterns("/auth/**", "/error");
+    }
+
+    private boolean isAdminPath(ServletRequestAttributes attrs) {
+        if (attrs == null) {
+            return false;
+        }
+        String servletPath = attrs.getRequest().getServletPath();
+        return servletPath != null && ADMIN_PATH_PREFIXES.stream()
+                .anyMatch(prefix -> servletPath.equals(prefix) || servletPath.startsWith(prefix + "/"));
     }
 }

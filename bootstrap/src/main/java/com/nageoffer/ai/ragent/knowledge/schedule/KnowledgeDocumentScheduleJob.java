@@ -39,6 +39,8 @@ import java.util.concurrent.RejectedExecutionException;
 @RequiredArgsConstructor
 public class KnowledgeDocumentScheduleJob {
 
+    private static final int MAX_SCAN_BATCH_SIZE = 200;
+
     private final KnowledgeDocumentScheduleMapper scheduleMapper;
     private final Executor knowledgeChunkExecutor;
     private final KnowledgeScheduleProperties scheduleProperties;
@@ -64,6 +66,7 @@ public class KnowledgeDocumentScheduleJob {
     @Scheduled(fixedDelayString = "${rag.knowledge.schedule.scan-delay-ms:10000}")
     public void scan() {
         Date now = new Date();
+        int batchSize = resolveScanBatchSize();
         List<KnowledgeDocumentScheduleDO> schedules = scheduleMapper.selectList(
                 new LambdaQueryWrapper<KnowledgeDocumentScheduleDO>()
                         .eq(KnowledgeDocumentScheduleDO::getEnabled, 1)
@@ -74,7 +77,7 @@ public class KnowledgeDocumentScheduleJob {
                                 .or()
                                 .lt(KnowledgeDocumentScheduleDO::getLockUntil, now))
                         .orderByAsc(KnowledgeDocumentScheduleDO::getNextRunTime)
-                        .last("LIMIT " + Math.max(scheduleProperties.getBatchSize(), 1))
+                        .last("LIMIT " + batchSize)
         );
 
         if (schedules == null || schedules.isEmpty()) {
@@ -97,5 +100,13 @@ public class KnowledgeDocumentScheduleJob {
                 lockManager.release(lease);
             }
         }
+    }
+
+    private int resolveScanBatchSize() {
+        Integer configured = scheduleProperties.getBatchSize();
+        if (configured == null || configured <= 0) {
+            return 1;
+        }
+        return Math.min(configured, MAX_SCAN_BATCH_SIZE);
     }
 }

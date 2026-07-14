@@ -43,6 +43,8 @@ public class StreamTaskManager {
 
     private static final String CANCEL_TOPIC = "ragent:stream:cancel";
     private static final String CANCEL_KEY_PREFIX = "ragent:stream:cancel:";
+    private static final String OWNER_KEY_PREFIX = "ragent:stream:owner:";
+    private static final int MAX_ID_LENGTH = 20;
     private static final Duration CANCEL_TTL = Duration.ofMinutes(30);
 
     private final Cache<String, StreamTaskInfo> tasks = CacheBuilder.newBuilder()
@@ -61,10 +63,11 @@ public class StreamTaskManager {
     public void subscribe() {
         RTopic topic = redissonClient.getTopic(CANCEL_TOPIC);
         listenerId = topic.addListener(String.class, (channel, taskId) -> {
-            if (StrUtil.isBlank(taskId)) {
+            String normalizedTaskId = normalizeOptionalId(taskId);
+            if (normalizedTaskId == null) {
                 return;
             }
-            cancelLocal(taskId);
+            cancelLocal(normalizedTaskId);
         });
     }
 
@@ -76,19 +79,27 @@ public class StreamTaskManager {
         redissonClient.getTopic(CANCEL_TOPIC).removeListener(listenerId);
     }
 
-    public void register(String taskId, SseEmitterSender sender, Supplier<CompletionPayload> onCancelSupplier) {
-        StreamTaskInfo taskInfo = getOrCreate(taskId);
+    public void register(String taskId, String userId, SseEmitterSender sender, Supplier<CompletionPayload> onCancelSupplier) {
+        String normalizedTaskId = normalizeRequiredId(taskId, "taskId");
+        String normalizedUserId = normalizeRequiredId(userId, "userId");
+        StreamTaskInfo taskInfo = getOrCreate(normalizedTaskId);
+        taskInfo.ownerUserId = normalizedUserId;
         taskInfo.sender = sender;
         taskInfo.onCancelSupplier = onCancelSupplier;
-        if (isTaskCancelledInRedis(taskId, taskInfo)) {
-            CompletionPayload payload = taskInfo.onCancelSupplier.get();
+        redissonClient.getBucket(ownerKey(normalizedTaskId)).set(normalizedUserId, CANCEL_TTL);
+        if (isTaskCancelledInRedis(normalizedTaskId, taskInfo)) {
+            CompletionPayload payload = resolveCancelPayload(taskInfo);
             sendCancelAndDone(sender, payload);
             sender.complete();
         }
     }
 
     public void bindHandle(String taskId, StreamCancellationHandle handle) {
-        StreamTaskInfo taskInfo = getOrCreate(taskId);
+        String normalizedTaskId = normalizeOptionalId(taskId);
+        if (normalizedTaskId == null) {
+            return;
+        }
+        StreamTaskInfo taskInfo = getOrCreate(normalizedTaskId);
         taskInfo.handle = handle;
         if (taskInfo.cancelled.get() && handle != null) {
             handle.cancel();
@@ -96,18 +107,28 @@ public class StreamTaskManager {
     }
 
     public boolean isCancelled(String taskId) {
-        StreamTaskInfo info = tasks.getIfPresent(taskId);
+        String normalizedTaskId = normalizeOptionalId(taskId);
+        if (normalizedTaskId == null) {
+            return false;
+        }
+        StreamTaskInfo info = tasks.getIfPresent(normalizedTaskId);
         return info != null && info.cancelled.get();
     }
 
-    public void cancel(String taskId) {
+    public boolean cancel(String taskId, String userId) {
+        String normalizedTaskId = normalizeOptionalId(taskId);
+        String normalizedUserId = normalizeOptionalId(userId);
+        if (normalizedTaskId == null || normalizedUserId == null || !isOwner(normalizedTaskId, normalizedUserId)) {
+            return false;
+        }
         // 先设置 Redis 标记，再发布消息
-        RBucket<Boolean> bucket = redissonClient.getBucket(cancelKey(taskId));
+        RBucket<Boolean> bucket = redissonClient.getBucket(cancelKey(normalizedTaskId));
         bucket.set(Boolean.TRUE, CANCEL_TTL);
 
         // 发布消息通知所有节点（包括本地）
         // 本地节点也通过监听器统一处理，避免重复调用 cancelLocal
-        redissonClient.getTopic(CANCEL_TOPIC).publish(taskId);
+        redissonClient.getTopic(CANCEL_TOPIC).publish(normalizedTaskId);
+        return true;
     }
 
     /**
@@ -129,7 +150,11 @@ public class StreamTaskManager {
     }
 
     private void cancelLocal(String taskId) {
-        StreamTaskInfo taskInfo = tasks.getIfPresent(taskId);
+        String normalizedTaskId = normalizeOptionalId(taskId);
+        if (normalizedTaskId == null) {
+            return;
+        }
+        StreamTaskInfo taskInfo = tasks.getIfPresent(normalizedTaskId);
         if (taskInfo == null) {
             return;
         }
@@ -145,22 +170,46 @@ public class StreamTaskManager {
 
         // 在取消时执行回调，保存已累积的内容
         if (taskInfo.sender != null) {
-            CompletionPayload payload = taskInfo.onCancelSupplier.get();
+            CompletionPayload payload = resolveCancelPayload(taskInfo);
             sendCancelAndDone(taskInfo.sender, payload);
             taskInfo.sender.complete();
         }
     }
 
     public void unregister(String taskId) {
+        String normalizedTaskId = normalizeOptionalId(taskId);
+        if (normalizedTaskId == null) {
+            return;
+        }
         // 清理本地缓存
-        tasks.invalidate(taskId);
+        tasks.invalidate(normalizedTaskId);
 
         // 清理Redis
-        redissonClient.getBucket(cancelKey(taskId)).deleteAsync();
+        redissonClient.getBucket(cancelKey(normalizedTaskId)).deleteAsync();
+        redissonClient.getBucket(ownerKey(normalizedTaskId)).deleteAsync();
     }
 
     private String cancelKey(String taskId) {
         return CANCEL_KEY_PREFIX + taskId;
+    }
+
+    private String ownerKey(String taskId) {
+        return OWNER_KEY_PREFIX + taskId;
+    }
+
+    private boolean isOwner(String taskId, String userId) {
+        String normalizedTaskId = normalizeOptionalId(taskId);
+        String normalizedUserId = normalizeOptionalId(userId);
+        if (normalizedTaskId == null || normalizedUserId == null) {
+            return false;
+        }
+        RBucket<String> ownerBucket = redissonClient.getBucket(ownerKey(normalizedTaskId));
+        String ownerUserId = ownerBucket.get();
+        if (StrUtil.isNotBlank(ownerUserId)) {
+            return ownerUserId.equals(normalizedUserId);
+        }
+        StreamTaskInfo taskInfo = tasks.getIfPresent(normalizedTaskId);
+        return taskInfo != null && normalizedUserId.equals(taskInfo.ownerUserId);
     }
 
     private void sendCancelAndDone(SseEmitterSender sender, CompletionPayload payload) {
@@ -174,8 +223,30 @@ public class StreamTaskManager {
         return tasks.get(taskId, StreamTaskInfo::new);
     }
 
+    private CompletionPayload resolveCancelPayload(StreamTaskInfo taskInfo) {
+        Supplier<CompletionPayload> supplier = taskInfo == null ? null : taskInfo.onCancelSupplier;
+        return supplier == null ? null : supplier.get();
+    }
+
+    private String normalizeRequiredId(String value, String fieldName) {
+        String normalized = normalizeOptionalId(value);
+        if (normalized == null) {
+            throw new IllegalArgumentException(fieldName + " is invalid");
+        }
+        return normalized;
+    }
+
+    private String normalizeOptionalId(String value) {
+        String normalized = StrUtil.trimToNull(value);
+        if (normalized == null || normalized.length() > MAX_ID_LENGTH || !normalized.matches("\\d{1,20}")) {
+            return null;
+        }
+        return normalized;
+    }
+
     private static final class StreamTaskInfo {
         private final AtomicBoolean cancelled = new AtomicBoolean(false);
+        private volatile String ownerUserId;
         private volatile StreamCancellationHandle handle;
         private volatile SseEmitterSender sender;
         private volatile Supplier<CompletionPayload> onCancelSupplier;

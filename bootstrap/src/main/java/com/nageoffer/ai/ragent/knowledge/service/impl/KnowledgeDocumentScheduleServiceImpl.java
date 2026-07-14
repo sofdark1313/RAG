@@ -42,6 +42,8 @@ import java.util.Date;
 @RequiredArgsConstructor
 public class KnowledgeDocumentScheduleServiceImpl implements KnowledgeDocumentScheduleService {
 
+    private static final int MAX_ID_LENGTH = 20;
+
     private final KnowledgeDocumentScheduleMapper scheduleMapper;
     private final KnowledgeDocumentScheduleExecMapper scheduleExecMapper;
     @Value("${rag.knowledge.schedule.min-interval-seconds:60}")
@@ -121,12 +123,24 @@ public class KnowledgeDocumentScheduleServiceImpl implements KnowledgeDocumentSc
     @Override
     @Transactional(rollbackFor = Exception.class)
     public void deleteByDocId(String docId) {
-        if (!StringUtils.hasText(docId)) {
+        String normalizedDocId = normalizeOptionalId(docId, "文档ID");
+        if (!StringUtils.hasText(normalizedDocId)) {
             return;
         }
         scheduleExecMapper.delete(new LambdaQueryWrapper<KnowledgeDocumentScheduleExecDO>()
-                .eq(KnowledgeDocumentScheduleExecDO::getDocId, docId));
+                .eq(KnowledgeDocumentScheduleExecDO::getDocId, normalizedDocId));
         scheduleMapper.delete(new LambdaQueryWrapper<KnowledgeDocumentScheduleDO>()
-                .eq(KnowledgeDocumentScheduleDO::getDocId, docId));
+                .eq(KnowledgeDocumentScheduleDO::getDocId, normalizedDocId));
+    }
+
+    private String normalizeOptionalId(String value, String fieldName) {
+        String text = value == null ? null : value.trim();
+        if (!StringUtils.hasText(text)) {
+            return null;
+        }
+        if (text.length() > MAX_ID_LENGTH || !text.matches("\\d{1,20}")) {
+            throw new ClientException(fieldName + "不合法");
+        }
+        return text;
     }
 }

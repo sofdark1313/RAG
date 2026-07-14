@@ -45,6 +45,11 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class MessageFeedbackServiceImpl implements MessageFeedbackService {
 
+    private static final int MAX_REASON_LENGTH = 255;
+    private static final int MAX_COMMENT_LENGTH = 1024;
+    private static final int MAX_ID_LENGTH = 20;
+    private static final int MAX_VOTE_LOOKUP_SIZE = 500;
+
     private final MessageFeedbackMapper feedbackMapper;
     private final ConversationMessageMapper conversationMessageMapper;
     private final MessageQueueProducer messageQueueProducer;
@@ -54,51 +59,66 @@ public class MessageFeedbackServiceImpl implements MessageFeedbackService {
 
     @Override
     public void submitFeedbackAsync(String messageId, MessageFeedbackRequest request) {
-        String userId = UserContext.getUserId();
-        Assert.notBlank(userId, () -> new ClientException("未获取到当前登录用户"));
-        Assert.notBlank(messageId, () -> new ClientException("消息ID不能为空"));
+        String normalizedUserId = normalizeRequiredId(UserContext.getUserId(), "用户ID");
+        String normalizedMessageId = normalizeRequiredId(messageId, "消息ID");
         Assert.notNull(request, () -> new ClientException("反馈内容不能为空"));
         Integer vote = request.getVote();
         Assert.notNull(vote, () -> new ClientException("反馈值不能为空"));
         Assert.isTrue(vote == 1 || vote == -1, () -> new ClientException("反馈值必须为 1 或 -1"));
+        loadAssistantMessage(normalizedMessageId, normalizedUserId);
+        String reason = normalizeText(request.getReason(), MAX_REASON_LENGTH, "反馈原因");
+        String comment = normalizeText(request.getComment(), MAX_COMMENT_LENGTH, "反馈评论");
 
         MessageFeedbackEvent event = MessageFeedbackEvent.builder()
-                .messageId(messageId)
-                .userId(userId)
+                .messageId(normalizedMessageId)
+                .userId(normalizedUserId)
                 .vote(vote)
-                .reason(request.getReason())
-                .comment(request.getComment())
+                .reason(reason)
+                .comment(comment)
                 .submitTime(System.currentTimeMillis())
                 .build();
-        messageQueueProducer.send(feedbackTopic, userId + ":" + messageId, "消息反馈", event);
+        messageQueueProducer.send(feedbackTopic, normalizedUserId + ":" + normalizedMessageId, "消息反馈", event);
     }
 
     @Override
     public void submitFeedback(String messageId, MessageFeedbackRequest request) {
-        String userId = UserContext.getUserId();
-        Assert.notBlank(userId, () -> new ClientException("未获取到当前登录用户"));
-        Assert.notBlank(messageId, () -> new ClientException("消息ID不能为空"));
+        String normalizedUserId = normalizeRequiredId(UserContext.getUserId(), "用户ID");
+        String normalizedMessageId = normalizeRequiredId(messageId, "消息ID");
         Assert.notNull(request, () -> new ClientException("反馈内容不能为空"));
 
         Integer vote = request.getVote();
         Assert.notNull(vote, () -> new ClientException("反馈值不能为空"));
         Assert.isTrue(vote == 1 || vote == -1, () -> new ClientException("反馈值必须为 1 或 -1"));
 
-        ConversationMessageDO message = loadAssistantMessage(messageId, userId);
-        doUpsertFeedback(messageId, userId, message.getConversationId(),
-                vote, request.getReason(), request.getComment(), System.currentTimeMillis());
+        ConversationMessageDO message = loadAssistantMessage(normalizedMessageId, normalizedUserId);
+        String reason = normalizeText(request.getReason(), MAX_REASON_LENGTH, "反馈原因");
+        String comment = normalizeText(request.getComment(), MAX_COMMENT_LENGTH, "反馈评论");
+        doUpsertFeedback(normalizedMessageId, normalizedUserId, message.getConversationId(),
+                vote, reason, comment, System.currentTimeMillis());
     }
 
     @Override
     public Map<String, Integer> getUserVotes(String userId, List<String> messageIds) {
-        if (StrUtil.isBlank(userId) || CollUtil.isEmpty(messageIds)) {
+        String normalizedUserId = normalizeOptionalId(userId, "用户ID");
+        if (StrUtil.isBlank(normalizedUserId) || CollUtil.isEmpty(messageIds)) {
             return Collections.emptyMap();
+        }
+        List<String> normalizedMessageIds = messageIds.stream()
+                .map(id -> normalizeOptionalId(id, "消息ID"))
+                .filter(StrUtil::isNotBlank)
+                .distinct()
+                .toList();
+        if (normalizedMessageIds.isEmpty()) {
+            return Collections.emptyMap();
+        }
+        if (normalizedMessageIds.size() > MAX_VOTE_LOOKUP_SIZE) {
+            throw new ClientException("消息ID数量不能超过" + MAX_VOTE_LOOKUP_SIZE);
         }
         List<MessageFeedbackDO> records = feedbackMapper.selectList(
                 Wrappers.lambdaQuery(MessageFeedbackDO.class)
-                        .eq(MessageFeedbackDO::getUserId, userId)
+                        .eq(MessageFeedbackDO::getUserId, normalizedUserId)
                         .eq(MessageFeedbackDO::getDeleted, 0)
-                        .in(MessageFeedbackDO::getMessageId, messageIds)
+                        .in(MessageFeedbackDO::getMessageId, normalizedMessageIds)
         );
         if (CollUtil.isEmpty(records)) {
             return Collections.emptyMap();
@@ -111,11 +131,11 @@ public class MessageFeedbackServiceImpl implements MessageFeedbackService {
                 ));
     }
 
-    private ConversationMessageDO loadAssistantMessage(String messageId, String userId) {
+    private ConversationMessageDO loadAssistantMessage(String normalizedMessageId, String normalizedUserId) {
         ConversationMessageDO message = conversationMessageMapper.selectOne(
                 Wrappers.lambdaQuery(ConversationMessageDO.class)
-                        .eq(ConversationMessageDO::getId, messageId)
-                        .eq(ConversationMessageDO::getUserId, userId)
+                        .eq(ConversationMessageDO::getId, normalizedMessageId)
+                        .eq(ConversationMessageDO::getUserId, normalizedUserId)
                         .eq(ConversationMessageDO::getDeleted, 0)
         );
         Assert.notNull(message, () -> new ClientException("消息不存在"));
@@ -123,20 +143,20 @@ public class MessageFeedbackServiceImpl implements MessageFeedbackService {
         return message;
     }
 
-    private void doUpsertFeedback(String messageId, String userId, String conversationId,
+    private void doUpsertFeedback(String normalizedMessageId, String normalizedUserId, String conversationId,
                                   Integer vote, String reason, String comment, long submitTime) {
         MessageFeedbackDO existing = feedbackMapper.selectOne(
                 Wrappers.lambdaQuery(MessageFeedbackDO.class)
-                        .eq(MessageFeedbackDO::getMessageId, messageId)
-                        .eq(MessageFeedbackDO::getUserId, userId)
+                        .eq(MessageFeedbackDO::getMessageId, normalizedMessageId)
+                        .eq(MessageFeedbackDO::getUserId, normalizedUserId)
                         .eq(MessageFeedbackDO::getDeleted, 0)
         );
 
         if (existing == null) {
             MessageFeedbackDO feedback = MessageFeedbackDO.builder()
-                    .messageId(messageId)
+                    .messageId(normalizedMessageId)
                     .conversationId(conversationId)
-                    .userId(userId)
+                    .userId(normalizedUserId)
                     .vote(vote)
                     .reason(reason)
                     .comment(comment)
@@ -159,21 +179,50 @@ public class MessageFeedbackServiceImpl implements MessageFeedbackService {
 
     @Override
     public void submitFeedbackByEvent(MessageFeedbackEvent event) {
-        String messageId = event.getMessageId();
-        String userId = event.getUserId();
-        Assert.notBlank(messageId, () -> new ClientException("消息ID不能为空"));
-        Assert.notBlank(userId, () -> new ClientException("用户ID不能为空"));
+        Assert.notNull(event, () -> new ClientException("反馈事件不能为空"));
+        String normalizedMessageId = normalizeRequiredId(event.getMessageId(), "消息ID");
+        String normalizedUserId = normalizeRequiredId(event.getUserId(), "用户ID");
         Assert.notNull(event.getVote(), () -> new ClientException("反馈值不能为空"));
+        Assert.isTrue(event.getVote() == 1 || event.getVote() == -1, () -> new ClientException("反馈值必须为 1 或 -1"));
 
-        ConversationMessageDO message = loadAssistantMessage(messageId, userId);
+        ConversationMessageDO message = loadAssistantMessage(normalizedMessageId, normalizedUserId);
         doUpsertFeedback(
-                messageId,
-                userId,
+                normalizedMessageId,
+                normalizedUserId,
                 message.getConversationId(),
                 event.getVote(),
-                event.getReason(),
-                event.getComment(),
-                event.getSubmitTime())
-        ;
+                normalizeText(event.getReason(), MAX_REASON_LENGTH, "反馈原因"),
+                normalizeText(event.getComment(), MAX_COMMENT_LENGTH, "反馈评论"),
+                event.getSubmitTime());
+    }
+
+    private String normalizeText(String value, int maxLength, String fieldName) {
+        String normalized = StrUtil.trimToNull(value);
+        if (normalized == null) {
+            return null;
+        }
+        if (normalized.length() > maxLength) {
+            throw new ClientException(fieldName + "长度不能超过 " + maxLength + " 个字符");
+        }
+        return normalized;
+    }
+
+    private String normalizeRequiredId(String value, String fieldName) {
+        String normalized = normalizeOptionalId(value, fieldName);
+        if (StrUtil.isBlank(normalized)) {
+            throw new ClientException(fieldName + "不能为空");
+        }
+        return normalized;
+    }
+
+    private String normalizeOptionalId(String value, String fieldName) {
+        String normalized = StrUtil.trimToNull(value);
+        if (normalized == null) {
+            return null;
+        }
+        if (normalized.length() > MAX_ID_LENGTH || !normalized.matches("\\d{1,20}")) {
+            throw new ClientException(fieldName + "不合法");
+        }
+        return normalized;
     }
 }

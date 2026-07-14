@@ -108,19 +108,16 @@ public class MultiQuestionRewriteService implements QueryRewriteService {
             RewriteResult parsed = parseRewriteAndSplit(raw);
 
             if (parsed != null) {
-                log.info("""
-                        RAG用户问题查询改写+拆分：
-                        原始问题：{}
-                        归一化后：{}
-                        改写结果：{}
-                        子问题：{}
-                        """, originalQuestion, normalizedQuestion, parsed.rewrittenQuestion(), parsed.subQuestions());
+                log.info("RAG用户问题查询改写+拆分完成: originalLength={}, normalizedLength={}, rewrittenLength={}, subQuestionCount={}",
+                        lengthOf(originalQuestion), lengthOf(normalizedQuestion),
+                        lengthOf(parsed.rewrittenQuestion()), sizeOf(parsed.subQuestions()));
                 return parsed;
             }
 
-            log.warn("查询改写+拆分解析失败，使用归一化问题兜底 - normalizedQuestion={}", normalizedQuestion);
+            log.warn("查询改写+拆分解析失败，使用归一化问题兜底: normalizedLength={}", lengthOf(normalizedQuestion));
         } catch (Exception e) {
-            log.warn("查询改写+拆分 LLM 调用失败，使用归一化问题兜底 - question={}，normalizedQuestion={}", originalQuestion, normalizedQuestion, e);
+            log.warn("查询改写+拆分 LLM 调用失败，使用归一化问题兜底: originalLength={}, normalizedLength={}",
+                    lengthOf(originalQuestion), lengthOf(normalizedQuestion), e);
         }
 
         // 统一兜底逻辑
@@ -188,7 +185,7 @@ public class MultiQuestionRewriteService implements QueryRewriteService {
             }
             return new RewriteResult(rewrite, subs);
         } catch (Exception e) {
-            log.warn("解析改写+拆分结果失败，raw={}", raw, e);
+            log.warn("解析改写+拆分结果失败，rawLength={}", lengthOf(raw), e);
             return null;
         }
     }
@@ -206,5 +203,13 @@ public class MultiQuestionRewriteService implements QueryRewriteService {
         return parts.stream()
                 .map(s -> s.endsWith("？") || s.endsWith("?") ? s : s + "？")
                 .toList();
+    }
+
+    private int lengthOf(String text) {
+        return text == null ? 0 : text.length();
+    }
+
+    private int sizeOf(List<String> values) {
+        return values == null ? 0 : values.size();
     }
 }

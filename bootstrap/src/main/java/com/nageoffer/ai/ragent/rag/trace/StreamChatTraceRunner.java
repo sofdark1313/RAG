@@ -81,7 +81,6 @@ public class StreamChatTraceRunner {
                 .startTime(new Date())
                 .extraData(JSONUtil.createObj()
                         .set("questionLength", StrUtil.length(question))
-                        .set("question", question)
                         .toString())
                 .build());
 
@@ -175,4 +174,5 @@ public class StreamChatTraceRunner {
         int max = traceProperties.getMaxErrorLength();
         return message.length() <= max ? message : message.substring(0, max);
     }
+
 }

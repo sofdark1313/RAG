@@ -21,7 +21,8 @@ import {
   Upload,
   Users,
   FolderKanban,
-  Workflow
+  Workflow,
+  type LucideIcon
 } from "lucide-react";
 import { useAuthStore } from "@/stores/authStore";
 import { Button } from "@/components/ui/button";
@@ -48,7 +49,7 @@ import { Avatar } from "@/components/common/Avatar";
 type MenuChild = {
   path: string;
   label: string;
-  icon: any;
+  icon: LucideIcon;
   search?: string;
 };
 
@@ -56,7 +57,7 @@ type MenuItem = {
   id?: string;
   path: string;
   label: string;
-  icon: any;
+  icon: LucideIcon;
   search?: string;
   children?: MenuChild[];
 };
@@ -482,8 +483,9 @@ export function AdminLayout() {
                   }
 
                   const isGroupActive = item.children.some((child) => isLeafActive(child.path, child.search));
-                  const groupId = item.id as string;
+                  const groupId = item.id ?? item.path;
                   const isOpen = openGroups[groupId];
+                  const GroupIcon = item.icon;
 
                   if (collapsed) {
                     return item.children.map((child) => {
@@ -529,7 +531,7 @@ export function AdminLayout() {
                                 isGroupActive && "is-group-active"
                               )}
                             />
-                        <item.icon className="admin-sidebar__item-icon" />
+                        <GroupIcon className="admin-sidebar__item-icon" />
                         <span className="flex-1 text-left">{item.label}</span>
                         {isOpen ? (
                           <ChevronDown className="h-4 w-4 text-white/60" />

@@ -32,6 +32,7 @@ import org.springframework.util.unit.DataSize;
 import java.io.IOException;
 import java.io.InputStream;
 import java.io.OutputStream;
+import java.net.URI;
 import java.nio.file.Files;
 import java.nio.file.Path;
 import java.security.MessageDigest;
@@ -126,8 +127,25 @@ public class RemoteFileFetcher {
         try {
             return httpClientHelper.head(url, Map.of());
         } catch (Exception e) {
-            log.debug("HEAD 获取失败，改为直接下载: {}", url, e);
+            log.debug("HEAD 获取失败，改为直接下载: {}", sanitizeUrl(url), e);
             return null;
+        }
+    }
+
+    private String sanitizeUrl(String url) {
+        if (!StringUtils.hasText(url)) {
+            return "";
+        }
+        try {
+            URI uri = URI.create(url);
+            if (!StringUtils.hasText(uri.getScheme()) || !StringUtils.hasText(uri.getHost())) {
+                return "(invalid-url)";
+            }
+            String port = uri.getPort() > 0 ? ":" + uri.getPort() : "";
+            String path = uri.getRawPath() == null ? "" : uri.getRawPath();
+            return uri.getScheme() + "://" + uri.getHost() + port + path;
+        } catch (Exception e) {
+            return "(invalid-url)";
         }
     }
 

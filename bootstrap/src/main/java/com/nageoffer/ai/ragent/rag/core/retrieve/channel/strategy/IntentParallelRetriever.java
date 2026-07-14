@@ -35,6 +35,11 @@ import java.util.concurrent.Executor;
 @Slf4j
 public class IntentParallelRetriever extends AbstractParallelRetriever<IntentParallelRetriever.IntentTask> {
 
+    private static final int DEFAULT_TOP_K = 5;
+    private static final int MAX_TOP_K = 100;
+    private static final int DEFAULT_TOP_K_MULTIPLIER = 1;
+    private static final int MAX_TOP_K_MULTIPLIER = 10;
+
     private final RetrieverService retrieverService;
 
     public record IntentTask(NodeScore nodeScore, int intentTopK) {
@@ -97,19 +102,26 @@ public class IntentParallelRetriever extends AbstractParallelRetriever<IntentPar
      * 计算单个意图节点检索 TopK
      */
     private int resolveIntentTopK(NodeScore nodeScore, int fallbackTopK, int topKMultiplier) {
-        int baseTopK = fallbackTopK;
+        int baseTopK = normalizeTopK(fallbackTopK);
         if (nodeScore != null && nodeScore.getNode() != null) {
             Integer nodeTopK = nodeScore.getNode().getTopK();
             if (nodeTopK != null && nodeTopK > 0) {
-                baseTopK = nodeTopK;
+                baseTopK = normalizeTopK(nodeTopK);
             }
         }
 
+        int multiplier = Math.min(topKMultiplier, MAX_TOP_K_MULTIPLIER);
         if (topKMultiplier <= 0) {
             log.warn("意图定向通道倍率配置异常: {}, 使用基础 TopK: {}", topKMultiplier, baseTopK);
-            return baseTopK;
+            multiplier = DEFAULT_TOP_K_MULTIPLIER;
         }
+        return baseTopK * multiplier;
+    }
 
-        return baseTopK * topKMultiplier;
+    private int normalizeTopK(int topK) {
+        if (topK <= 0) {
+            return DEFAULT_TOP_K;
+        }
+        return Math.min(topK, MAX_TOP_K);
     }
 }

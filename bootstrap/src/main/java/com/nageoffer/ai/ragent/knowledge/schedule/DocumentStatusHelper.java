@@ -17,6 +17,7 @@
 
 package com.nageoffer.ai.ragent.knowledge.schedule;
 
+import cn.hutool.core.util.StrUtil;
 import com.baomidou.mybatisplus.core.toolkit.Wrappers;
 import com.nageoffer.ai.ragent.framework.exception.ClientException;
 import com.nageoffer.ai.ragent.knowledge.dao.entity.KnowledgeDocumentDO;
@@ -35,18 +36,23 @@ import java.util.List;
 @RequiredArgsConstructor
 public class DocumentStatusHelper {
 
+    private static final int MAX_ID_LENGTH = 20;
     private static final String SYSTEM_USER = "system";
 
     private final KnowledgeDocumentMapper documentMapper;
 
     public boolean tryMarkRunning(String docId) {
+        String normalizedDocId = normalizeOptionalId(docId);
+        if (normalizedDocId == null) {
+            return false;
+        }
         // Wrapper 更新不触发 updateTime 自动填充, 显式刷新, 使卡死恢复以分块开始时刻为基准
         return documentMapper.update(
                 Wrappers.lambdaUpdate(KnowledgeDocumentDO.class)
                         .set(KnowledgeDocumentDO::getStatus, DocumentStatus.RUNNING.getCode())
                         .set(KnowledgeDocumentDO::getUpdatedBy, SYSTEM_USER)
                         .set(KnowledgeDocumentDO::getUpdateTime, new Date())
-                        .eq(KnowledgeDocumentDO::getId, docId)
+                        .eq(KnowledgeDocumentDO::getId, normalizedDocId)
                         .eq(KnowledgeDocumentDO::getDeleted, 0)
                         .eq(KnowledgeDocumentDO::getEnabled, 1)
                         .ne(KnowledgeDocumentDO::getStatus, DocumentStatus.RUNNING.getCode())
@@ -54,18 +60,26 @@ public class DocumentStatusHelper {
     }
 
     public void markFailedIfRunning(String docId) {
+        String normalizedDocId = normalizeOptionalId(docId);
+        if (normalizedDocId == null) {
+            return;
+        }
         documentMapper.update(
                 Wrappers.lambdaUpdate(KnowledgeDocumentDO.class)
                         .set(KnowledgeDocumentDO::getStatus, DocumentStatus.FAILED.getCode())
                         .set(KnowledgeDocumentDO::getUpdatedBy, SYSTEM_USER)
-                        .eq(KnowledgeDocumentDO::getId, docId)
+                        .eq(KnowledgeDocumentDO::getId, normalizedDocId)
                         .eq(KnowledgeDocumentDO::getStatus, DocumentStatus.RUNNING.getCode())
         );
     }
 
     public void applyRefreshedFileMetadata(String docId, StoredFileDTO stored) {
+        String normalizedDocId = requireValidId(docId, "文档ID");
+        if (stored == null) {
+            throw new ClientException("存储文件不能为空");
+        }
         KnowledgeDocumentDO update = KnowledgeDocumentDO.builder()
-                .id(docId)
+                .id(normalizedDocId)
                 .docName(stored.getOriginalFilename())
                 .fileUrl(stored.getUrl())
                 .fileType(stored.getDetectedType())
@@ -111,5 +125,21 @@ public class DocumentStatusHelper {
     }
 
     public record StuckRecoveryResult(List<String> stuckDocIds, int actualRecovered) {
+    }
+
+    private String requireValidId(String value, String fieldName) {
+        String normalized = normalizeOptionalId(value);
+        if (normalized == null) {
+            throw new ClientException(fieldName + "不合法");
+        }
+        return normalized;
+    }
+
+    private String normalizeOptionalId(String value) {
+        String normalized = StrUtil.trimToNull(value);
+        if (normalized == null || normalized.length() > MAX_ID_LENGTH || !normalized.matches("\\d{1,20}")) {
+            return null;
+        }
+        return normalized;
     }
 }

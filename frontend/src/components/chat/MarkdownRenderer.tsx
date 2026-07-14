@@ -1,6 +1,3 @@
-// @ts-nocheck
-/* eslint-disable */
-
 import * as React from "react";
 import ReactMarkdown from "react-markdown";
 import remarkGfm from "remark-gfm";
@@ -27,13 +24,13 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
       remarkPlugins={[[remarkGfm, { singleTilde: false }], remarkCjkFriendly]}
       rehypePlugins={[rehypeRaw, rehypeSanitize]}
       components={{
-        code({ inline, className, children, node, ...props }) {
+        code({ className, children, ...props }) {
           const match = /language-(\w+)/.exec(className || "");
           const language = match?.[1] || "text";
           const value = String(children).replace(/\n$/, "");
 
           // 判断是否为内联代码：inline 为 true 或者没有换行符
-          if (inline || !value.includes('\n')) {
+          if (!className && !value.includes('\n')) {
             return (
               <code
                 className={cn(
@@ -77,28 +74,8 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
             </div>
           );
         },
-        img({ src, alt, ...props }) {
-          const [hasError, setHasError] = React.useState(false);
-
-          if (hasError) {
-            return (
-              <div className="my-3 flex items-center gap-2 text-sm text-[#999999]">
-                <ImageIcon className="h-4 w-4" />
-                <span>图片加载失败</span>
-              </div>
-            );
-          }
-
-          return (
-            <img
-              src={src}
-              alt=""
-              className="my-3 max-w-full rounded-lg"
-              onError={() => setHasError(true)}
-              loading="lazy"
-              {...props}
-            />
-          );
+        img({ src, ...props }) {
+          return <MarkdownImage src={src} {...props} />;
         },
         a({ children, ...props }) {
           return (
@@ -233,6 +210,30 @@ export function MarkdownRenderer({ content }: MarkdownRendererProps) {
     >
       {content}
     </ReactMarkdown>
+  );
+}
+
+function MarkdownImage({ src, ...props }: React.ComponentPropsWithoutRef<"img">) {
+  const [hasError, setHasError] = React.useState(false);
+
+  if (hasError) {
+    return (
+      <div className="my-3 flex items-center gap-2 text-sm text-[#999999]">
+        <ImageIcon className="h-4 w-4" />
+        <span>图片加载失败</span>
+      </div>
+    );
+  }
+
+  return (
+    <img
+      src={src}
+      alt=""
+      className="my-3 max-w-full rounded-lg"
+      onError={() => setHasError(true)}
+      loading="lazy"
+      {...props}
+    />
   );
 }
 

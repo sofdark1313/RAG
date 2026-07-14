@@ -19,6 +19,7 @@ package com.nageoffer.ai.ragent.rag.core.vector;
 
 import cn.hutool.core.lang.Assert;
 import cn.hutool.core.util.IdUtil;
+import cn.hutool.core.util.StrUtil;
 import com.google.gson.Gson;
 import com.google.gson.JsonArray;
 import com.google.gson.JsonObject;
@@ -47,6 +48,7 @@ import java.util.List;
 public class MilvusVectorStoreService implements VectorStoreService {
 
     private static final Gson GSON = new Gson();
+    private static final int MAX_ID_LENGTH = 20;
 
     private final MilvusClientV2 milvusClient;
     private final RAGDefaultProperties ragDefaultProperties;
@@ -54,6 +56,7 @@ public class MilvusVectorStoreService implements VectorStoreService {
     @Override
     public void indexDocumentChunks(String collectionName, String docId, List<VectorChunk> chunks) {
         Assert.isFalse(chunks == null || chunks.isEmpty(), () -> new ClientException("文档分块不允许为空"));
+        String normalizedDocId = normalizeRequiredId(docId, "文档ID");
 
         final int dim = ragDefaultProperties.getDimension();
         List<float[]> vectors = extractVectors(chunks, dim);
@@ -61,16 +64,18 @@ public class MilvusVectorStoreService implements VectorStoreService {
         List<JsonObject> rows = new ArrayList<>(chunks.size());
         for (int i = 0; i < chunks.size(); i++) {
             VectorChunk chunk = chunks.get(i);
+            Assert.notNull(chunk, () -> new ClientException("Chunk 对象不能为空"));
+            String chunkId = normalizeRequiredId(chunk.getChunkId(), "Chunk ID");
 
             String content = chunk.getContent() == null ? "" : chunk.getContent();
             if (content.length() > 65535) {
                 content = content.substring(0, 65535);
             }
 
-            JsonObject metadata = buildMetadata(collectionName, docId, chunk);
+            JsonObject metadata = buildMetadata(collectionName, normalizedDocId, chunk);
 
             JsonObject row = new JsonObject();
-            row.addProperty("id", chunk.getChunkId());
+            row.addProperty("id", chunkId);
             row.addProperty("content", content);
             row.add("metadata", metadata);
             row.add("embedding", toJsonArray(vectors.get(i)));
@@ -90,18 +95,25 @@ public class MilvusVectorStoreService implements VectorStoreService {
     @Override
     public void updateChunk(String collectionName, String docId, VectorChunk chunk) {
         Assert.isFalse(chunk == null, () -> new ClientException("Chunk 对象不能为空"));
+        String normalizedDocId = normalizeRequiredId(docId, "文档ID");
 
         final int dim = ragDefaultProperties.getDimension();
         float[] vector = extractVector(chunk, dim);
 
-        String chunkPk = chunk.getChunkId() != null ? chunk.getChunkId() : IdUtil.getSnowflakeNextIdStr();
+        String chunkPk = normalizeOptionalId(chunk.getChunkId());
+        if (chunkPk == null) {
+            if (StrUtil.isNotBlank(chunk.getChunkId())) {
+                throw new ClientException("Chunk ID不合法");
+            }
+            chunkPk = IdUtil.getSnowflakeNextIdStr();
+        }
 
         String content = chunk.getContent() == null ? "" : chunk.getContent();
         if (content.length() > 65535) {
             content = content.substring(0, 65535);
         }
 
-        JsonObject metadata = buildMetadata(collectionName, docId, chunk);
+        JsonObject metadata = buildMetadata(collectionName, normalizedDocId, chunk);
 
         JsonObject row = new JsonObject();
         row.addProperty("id", chunkPk);
@@ -121,8 +133,9 @@ public class MilvusVectorStoreService implements VectorStoreService {
 
     @Override
     public void deleteDocumentVectors(String collectionName, String docId) {
+        String normalizedDocId = normalizeRequiredId(docId, "文档ID");
         // 已通过 collectionName 定位集合，只需按 doc_id 过滤即可
-        String filter = "metadata[\"doc_id\"] == \"" + docId + "\"";
+        String filter = "metadata[\"doc_id\"] == \"" + normalizedDocId + "\"";
 
         DeleteReq deleteReq = DeleteReq.builder()
                 .collectionName(collectionName)
@@ -131,13 +144,14 @@ public class MilvusVectorStoreService implements VectorStoreService {
 
         DeleteResp resp = milvusClient.delete(deleteReq);
         log.info("Milvus 删除指定文档的所有 chunk 向量索引成功, collection={}, docId={}, deleteCnt={}",
-                collectionName, docId, resp.getDeleteCnt());
+                collectionName, normalizedDocId, resp.getDeleteCnt());
     }
 
     @Override
     public void deleteChunkById(String collectionName, String chunkId) {
+        String normalizedChunkId = normalizeRequiredId(chunkId, "Chunk ID");
         // chunkId 就是 Milvus 中的 doc_id（主键），直接通过主键删除
-        String filter = "id == \"" + chunkId + "\"";
+        String filter = "id == \"" + normalizedChunkId + "\"";
 
         DeleteReq deleteReq = DeleteReq.builder()
                 .collectionName(collectionName)
@@ -146,7 +160,7 @@ public class MilvusVectorStoreService implements VectorStoreService {
 
         DeleteResp resp = milvusClient.delete(deleteReq);
         log.info("Milvus 删除指定 chunk 向量索引成功, collection={}, chunkId={}, deleteCnt={}",
-                collectionName, chunkId, resp.getDeleteCnt());
+                collectionName, normalizedChunkId, resp.getDeleteCnt());
     }
 
     @Override
@@ -154,7 +168,11 @@ public class MilvusVectorStoreService implements VectorStoreService {
         if (chunkIds == null || chunkIds.isEmpty()) {
             return;
         }
-        String idList = chunkIds.stream()
+        List<String> normalizedChunkIds = chunkIds.stream()
+                .map(id -> normalizeRequiredId(id, "Chunk ID"))
+                .distinct()
+                .toList();
+        String idList = normalizedChunkIds.stream()
                 .map(id -> "\"" + id + "\"")
                 .collect(java.util.stream.Collectors.joining(", "));
         String filter = "id in [" + idList + "]";
@@ -166,7 +184,7 @@ public class MilvusVectorStoreService implements VectorStoreService {
 
         DeleteResp resp = milvusClient.delete(deleteReq);
         log.info("Milvus 批量删除 chunk 向量索引成功, collection={}, count={}, deleteCnt={}",
-                collectionName, chunkIds.size(), resp.getDeleteCnt());
+                collectionName, normalizedChunkIds.size(), resp.getDeleteCnt());
     }
 
     private List<float[]> extractVectors(List<VectorChunk> chunks, int expectedDim) {
@@ -178,12 +196,23 @@ public class MilvusVectorStoreService implements VectorStoreService {
     }
 
     private float[] extractVector(VectorChunk chunk, int expectedDim) {
+        Assert.notNull(chunk, () -> new ClientException("Chunk 对象不能为空"));
         float[] vector = chunk.getEmbedding();
         if (vector == null || vector.length == 0) {
             throw new ClientException("向量不能为空");
         }
         if (vector.length != expectedDim) {
             throw new ClientException("向量维度不匹配，期望维度为 " + expectedDim);
+        }
+        boolean hasMagnitude = false;
+        for (float value : vector) {
+            if (!Float.isFinite(value)) {
+                throw new ClientException("向量包含非法数值");
+            }
+            hasMagnitude = hasMagnitude || value != 0F;
+        }
+        if (!hasMagnitude) {
+            throw new ClientException("向量不能全为0");
         }
         return vector;
     }
@@ -206,5 +235,21 @@ public class MilvusVectorStoreService implements VectorStoreService {
         metadata.addProperty("doc_id", docId);
         metadata.addProperty("chunk_index", chunk.getIndex());
         return metadata;
+    }
+
+    private String normalizeRequiredId(String value, String fieldName) {
+        String normalized = normalizeOptionalId(value);
+        if (normalized == null) {
+            throw new ClientException(fieldName + "不合法");
+        }
+        return normalized;
+    }
+
+    private String normalizeOptionalId(String value) {
+        String normalized = StrUtil.trimToNull(value);
+        if (normalized == null || normalized.length() > MAX_ID_LENGTH || !normalized.matches("\\d{1,20}")) {
+            return null;
+        }
+        return normalized;
     }
 }

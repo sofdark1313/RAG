@@ -42,6 +42,9 @@ import java.util.concurrent.Executor;
 @Component
 public class VectorGlobalSearchChannel implements SearchChannel {
 
+    private static final int DEFAULT_TOP_K_MULTIPLIER = 1;
+    private static final int MAX_TOP_K_MULTIPLIER = 10;
+
     private final SearchChannelProperties properties;
     private final KnowledgeBaseMapper knowledgeBaseMapper;
     private final CollectionParallelRetriever parallelRetriever;
@@ -126,7 +129,7 @@ public class VectorGlobalSearchChannel implements SearchChannel {
             }
 
             // 并行在所有 collection 中检索
-            int topKMultiplier = properties.getChannels().getVectorGlobal().getTopKMultiplier();
+            int topKMultiplier = normalizeTopKMultiplier(properties.getChannels().getVectorGlobal().getTopKMultiplier());
             List<RetrievedChunk> allChunks = retrieveFromAllCollections(
                     context.getMainQuestion(),
                     collections,
@@ -190,5 +193,12 @@ public class VectorGlobalSearchChannel implements SearchChannel {
     @Override
     public SearchChannelType getType() {
         return SearchChannelType.VECTOR_GLOBAL;
+    }
+
+    private int normalizeTopKMultiplier(int multiplier) {
+        if (multiplier <= 0) {
+            return DEFAULT_TOP_K_MULTIPLIER;
+        }
+        return Math.min(multiplier, MAX_TOP_K_MULTIPLIER);
     }
 }

@@ -41,7 +41,9 @@ scripts/logs/
 node_modules/
 dist/
 .vite/
+*.tsbuildinfo
 .env.local
 
 ### Tmp Out ###
 .output/
+/docs/

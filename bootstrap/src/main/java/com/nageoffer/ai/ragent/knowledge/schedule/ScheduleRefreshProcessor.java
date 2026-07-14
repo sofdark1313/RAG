@@ -49,6 +49,7 @@ import java.util.Date;
 @RequiredArgsConstructor
 public class ScheduleRefreshProcessor {
 
+    private static final int MAX_ID_LENGTH = 20;
     private static final String SYSTEM_USER = "system";
 
     private final KnowledgeDocumentScheduleMapper scheduleMapper;
@@ -64,10 +65,11 @@ public class ScheduleRefreshProcessor {
     private final DocumentStatusHelper documentStatusHelper;
 
     public void process(ScheduleLockLease lease) {
+        lease = normalizeLease(lease);
         if (lease == null) {
             return;
         }
-        String scheduleId = lease.scheduleId();
+        String normalizedScheduleId = lease.scheduleId();
         Date startTime = new Date();
         if (shouldAbortForLeaseLoss(lease, null, "任务启动")) {
             log.info("定时刷新任务启动时已失去锁，跳过执行: scheduleId={}, lockToken={}",
@@ -90,12 +92,17 @@ public class ScheduleRefreshProcessor {
         }
         RefreshRunState state = new RefreshRunState();
         try {
-            KnowledgeDocumentScheduleDO schedule = scheduleMapper.selectById(scheduleId);
+            KnowledgeDocumentScheduleDO schedule = scheduleMapper.selectById(normalizedScheduleId);
             if (schedule == null) {
                 return;
             }
 
-            state.document = documentMapper.selectById(schedule.getDocId());
+            String normalizedDocId = normalizeOptionalId(schedule.getDocId());
+            if (!StringUtils.hasText(normalizedDocId)) {
+                disableIfOwnedOrMarkLeaseLost(lease, state, "文档ID不合法", "禁用调度: 文档ID不合法");
+                return;
+            }
+            state.document = documentMapper.selectById(normalizedDocId);
             if (state.document == null || (state.document.getDeleted() != null && state.document.getDeleted() == 1)) {
                 disableIfOwnedOrMarkLeaseLost(lease, state, "文档不存在或已删除", "禁用调度: 文档不存在或已删除");
                 return;
@@ -130,7 +137,7 @@ public class ScheduleRefreshProcessor {
             }
 
             KnowledgeDocumentScheduleExecDO exec = KnowledgeDocumentScheduleExecDO.builder()
-                    .scheduleId(scheduleId)
+                    .scheduleId(normalizedScheduleId)
                     .docId(state.document.getId())
                     .kbId(state.document.getKbId())
                     .status(ScheduleRunStatus.RUNNING.getCode())
@@ -139,7 +146,7 @@ public class ScheduleRefreshProcessor {
             execMapper.insert(exec);
 
             state.ctx = ScheduleStateContext.builder()
-                    .scheduleId(schedule.getId())
+                    .scheduleId(normalizedScheduleId)
                     .execId(exec.getId())
                     .cronExpr(schedule.getCronExpr())
                     .startTime(startTime)
@@ -176,7 +183,11 @@ public class ScheduleRefreshProcessor {
                 }
                 state.phase = Phase.DOC_OCCUPIED;
 
-                KnowledgeBaseDO kbDO = kbMapper.selectById(state.document.getKbId());
+                String normalizedKbId = normalizeOptionalId(state.document.getKbId());
+                if (!StringUtils.hasText(normalizedKbId)) {
+                    throw new ClientException("知识库ID不合法");
+                }
+                KnowledgeBaseDO kbDO = kbMapper.selectById(normalizedKbId);
                 if (kbDO == null) {
                     throw new ClientException("知识库不存在");
                 }
@@ -262,8 +273,8 @@ public class ScheduleRefreshProcessor {
             } else if (state.stored != null && state.phase.ordinal() < Phase.CHUNK_COMPLETED.ordinal()) {
                 deleteOldFileQuietly(state.stored.getUrl(), null);
             } else if (state.stored != null) {
-                log.warn("定时刷新分块已完成但未完成文件元数据切换，保留新文件待后续处理: scheduleId={}, docId={}, fileUrl={}",
-                        scheduleId, state.document != null ? state.document.getId() : null, state.stored.getUrl());
+                log.warn("定时刷新分块已完成但未完成文件元数据切换，保留新文件待后续处理: scheduleId={}, docId={}, fileUrlLength={}",
+                        scheduleId, state.document != null ? state.document.getId() : null, lengthOf(state.stored.getUrl()));
             }
             boolean released = lockManager.release(lease);
             if (!released && !state.leaseLost && !heartbeat.isLost()) {
@@ -357,8 +368,37 @@ public class ScheduleRefreshProcessor {
         try {
             fileStorageService.deleteByUrl(oldFileUrl);
         } catch (Exception e) {
-            log.warn("定时刷新文件清理失败: {}", oldFileUrl, e);
+            log.warn("定时刷新文件清理失败: oldFileUrlLength={}", lengthOf(oldFileUrl), e);
         }
+    }
+
+    private static int lengthOf(String value) {
+        return value == null ? 0 : value.length();
+    }
+
+    private ScheduleLockLease normalizeLease(ScheduleLockLease lease) {
+        if (lease == null || !StringUtils.hasText(lease.lockToken())) {
+            return null;
+        }
+        String normalizedScheduleId = normalizeOptionalId(lease.scheduleId());
+        if (!StringUtils.hasText(normalizedScheduleId)) {
+            return null;
+        }
+        if (normalizedScheduleId.equals(lease.scheduleId())) {
+            return lease;
+        }
+        return new ScheduleLockLease(normalizedScheduleId, lease.lockToken());
+    }
+
+    private String normalizeOptionalId(String value) {
+        if (!StringUtils.hasText(value)) {
+            return null;
+        }
+        String normalized = value.trim();
+        if (normalized.length() > MAX_ID_LENGTH || !normalized.matches("\\d{1,20}")) {
+            return null;
+        }
+        return normalized;
     }
 
     private enum Phase {

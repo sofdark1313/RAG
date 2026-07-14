@@ -58,6 +58,17 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class IntentTreeServiceImpl extends ServiceImpl<IntentNodeMapper, IntentNodeDO> implements IntentTreeService {
 
+    private static final int MAX_CODE_LENGTH = 64;
+    private static final int MAX_NAME_LENGTH = 64;
+    private static final int MAX_DESCRIPTION_LENGTH = 512;
+    private static final int MAX_MCP_TOOL_ID_LENGTH = 128;
+    private static final int MAX_PROMPT_TEXT_LENGTH = 8000;
+    private static final int MAX_EXAMPLES_COUNT = 20;
+    private static final int MAX_EXAMPLE_LENGTH = 255;
+    private static final int MAX_TOP_K = 50;
+    private static final int MAX_ID_LENGTH = 20;
+    private static final int MAX_BATCH_NODE_COUNT = 100;
+
     private final KnowledgeBaseMapper knowledgeBaseMapper;
     private final IntentTreeCacheManager intentTreeCacheManager;
 
@@ -105,51 +116,49 @@ public class IntentTreeServiceImpl extends ServiceImpl<IntentNodeMapper, IntentN
 
     @Override
     public String createNode(IntentNodeCreateRequest requestParam) {
+        Assert.notNull(requestParam, () -> new ClientException("请求不能为空"));
+        String intentCode = normalizeRequiredText(requestParam.getIntentCode(), MAX_CODE_LENGTH, "意图标识");
+        String name = normalizeRequiredText(requestParam.getName(), MAX_NAME_LENGTH, "意图名称");
+        String kbId = normalizeOptionalId(requestParam.getKbId(), "知识库ID");
+        Integer level = normalizeLevel(requestParam.getLevel());
+        Integer kind = normalizeKind(requestParam.getKind());
+
         // 简单重复校验：intentCode 不允许重复
         long count = this.count(new LambdaQueryWrapper<IntentNodeDO>()
-                .eq(IntentNodeDO::getIntentCode, requestParam.getIntentCode())
+                .eq(IntentNodeDO::getIntentCode, intentCode)
                 .eq(IntentNodeDO::getDeleted, 0));
         if (count > 0) {
-            throw new ClientException("意图标识已存在: " + requestParam.getIntentCode());
+            throw new ClientException("意图标识已存在: " + intentCode);
         }
 
-        if (Objects.equals(requestParam.getLevel(), IntentLevel.TOPIC.getCode())
-                && Objects.equals(requestParam.getKind(), IntentKind.KB.getCode())
-                && StrUtil.isBlank(requestParam.getKbId())) {
+        if (Objects.equals(level, IntentLevel.TOPIC.getCode())
+                && Objects.equals(kind, IntentKind.KB.getCode())
+                && StrUtil.isBlank(kbId)) {
             throw new ClientException("TOPIC级别的RAG检索节点必须指定目标知识库");
         }
 
+        String collectionName = resolveCollectionName(kbId);
         IntentNodeDO node = IntentNodeDO.builder()
-                .intentCode(requestParam.getIntentCode())
-                .kbId(
-                        StrUtil.isNotBlank(requestParam.getKbId()) ? requestParam.getKbId() : null
-                )
-                .collectionName(
-                        StrUtil.isNotBlank(requestParam.getKbId()) ? knowledgeBaseMapper.selectById(requestParam.getKbId()).getCollectionName() : null
-                )
-                .name(requestParam.getName())
-                .level(requestParam.getLevel())
-                .parentCode(requestParam.getParentCode())
-                .description(requestParam.getDescription())
-                .mcpToolId(requestParam.getMcpToolId())
-                .examples(
-                        requestParam.getExamples() == null ? null : GSON.toJson(requestParam.getExamples())
-                )
+                .intentCode(intentCode)
+                .kbId(kbId)
+                .collectionName(collectionName)
+                .name(name)
+                .level(level)
+                .parentCode(normalizeOptionalText(requestParam.getParentCode(), MAX_CODE_LENGTH, "父意图标识"))
+                .description(normalizeOptionalText(requestParam.getDescription(), MAX_DESCRIPTION_LENGTH, "意图描述"))
+                .mcpToolId(normalizeOptionalText(requestParam.getMcpToolId(), MAX_MCP_TOOL_ID_LENGTH, "MCP工具ID"))
+                .examples(normalizeExamples(requestParam.getExamples()))
                 .topK(normalizeTopK(requestParam.getTopK()))
-                .kind(
-                        requestParam.getKind() == null ? 0 : requestParam.getKind()
-                )
+                .kind(kind)
                 .sortOrder(
                         requestParam.getSortOrder() == null ? 0 : requestParam.getSortOrder()
                 )
-                .enabled(
-                        requestParam.getEnabled() == null ? 1 : requestParam.getEnabled()
-                )
+                .enabled(normalizeEnabled(requestParam.getEnabled()))
                 .createBy(UserContext.getUsername())
                 .updateBy(UserContext.getUsername())
-                .paramPromptTemplate(requestParam.getParamPromptTemplate())
-                .promptSnippet(requestParam.getPromptSnippet())
-                .promptTemplate(requestParam.getPromptTemplate())
+                .paramPromptTemplate(normalizePromptText(requestParam.getParamPromptTemplate(), "参数提取提示词模板"))
+                .promptSnippet(normalizePromptText(requestParam.getPromptSnippet(), "提示词片段"))
+                .promptTemplate(normalizePromptText(requestParam.getPromptTemplate(), "提示词模板"))
                 .deleted(0)
                 .build();
 
@@ -163,49 +172,51 @@ public class IntentTreeServiceImpl extends ServiceImpl<IntentNodeMapper, IntentN
 
     @Override
     public void updateNode(String id, IntentNodeUpdateRequest req) {
-        IntentNodeDO node = this.getById(id);
+        Assert.notNull(req, () -> new ClientException("请求不能为空"));
+        String normalizedId = normalizeRequiredId(id, "节点ID");
+        IntentNodeDO node = this.getById(normalizedId);
         if (node == null || Objects.equals(node.getDeleted(), 1)) {
-            throw new ServiceException("节点不存在或已删除: id=" + id);
+            throw new ServiceException("节点不存在或已删除: id=" + normalizedId);
         }
 
         if (req.getName() != null) {
-            node.setName(req.getName());
+            node.setName(normalizeRequiredText(req.getName(), MAX_NAME_LENGTH, "意图名称"));
         }
         if (req.getLevel() != null) {
-            node.setLevel(req.getLevel());
+            node.setLevel(normalizeLevel(req.getLevel()));
         }
         if (req.getParentCode() != null) {
-            node.setParentCode(req.getParentCode());
+            node.setParentCode(normalizeOptionalText(req.getParentCode(), MAX_CODE_LENGTH, "父意图标识"));
         }
         if (req.getDescription() != null) {
-            node.setDescription(req.getDescription());
+            node.setDescription(normalizeOptionalText(req.getDescription(), MAX_DESCRIPTION_LENGTH, "意图描述"));
         }
         if (req.getExamples() != null) {
-            node.setExamples(GSON.toJson(req.getExamples()));
+            node.setExamples(normalizeExamples(req.getExamples()));
         }
         if (req.getCollectionName() != null) {
-            node.setCollectionName(req.getCollectionName());
+            node.setCollectionName(normalizeOptionalText(req.getCollectionName(), 128, "Collection名称"));
         }
         if (req.getTopK() != null) {
             node.setTopK(normalizeTopK(req.getTopK()));
         }
         if (req.getKind() != null) {
-            node.setKind(req.getKind());
+            node.setKind(normalizeKind(req.getKind()));
         }
         if (req.getSortOrder() != null) {
             node.setSortOrder(req.getSortOrder());
         }
         if (req.getEnabled() != null) {
-            node.setEnabled(req.getEnabled());
+            node.setEnabled(normalizeEnabled(req.getEnabled()));
         }
         if (req.getPromptSnippet() != null) {
-            node.setPromptSnippet(req.getPromptSnippet());
+            node.setPromptSnippet(normalizePromptText(req.getPromptSnippet(), "提示词片段"));
         }
         if (req.getPromptTemplate() != null) {
-            node.setPromptTemplate(req.getPromptTemplate());
+            node.setPromptTemplate(normalizePromptText(req.getPromptTemplate(), "提示词模板"));
         }
         if (req.getParamPromptTemplate() != null) {
-            node.setParamPromptTemplate(req.getParamPromptTemplate());
+            node.setParamPromptTemplate(normalizePromptText(req.getParamPromptTemplate(), "参数提取提示词模板"));
         }
         node.setUpdateBy(UserContext.getUsername());
         this.updateById(node);
@@ -216,7 +227,8 @@ public class IntentTreeServiceImpl extends ServiceImpl<IntentNodeMapper, IntentN
 
     @Override
     public void deleteNode(String id) {
-        this.removeById(id);
+        String normalizedId = normalizeRequiredId(id, "节点ID");
+        this.removeById(normalizedId);
 
         // 清除Redis缓存，下次读取时会重新从数据库加载
         intentTreeCacheManager.clearIntentTreeCache();
@@ -402,12 +414,47 @@ public class IntentTreeServiceImpl extends ServiceImpl<IntentNodeMapper, IntentN
         if (topK <= 0) {
             throw new ClientException("节点级 TopK 必须大于 0");
         }
+        if (topK > MAX_TOP_K) {
+            throw new ClientException("节点级 TopK 不能超过" + MAX_TOP_K);
+        }
         return topK;
+    }
+
+    private Integer normalizeLevel(Integer level) {
+        if (IntentLevel.fromCode(level) == null) {
+            throw new ClientException("意图层级不合法");
+        }
+        return level;
+    }
+
+    private Integer normalizeKind(Integer kind) {
+        Integer actualKind = kind == null ? IntentKind.KB.getCode() : kind;
+        if (IntentKind.fromCode(actualKind) == null) {
+            throw new ClientException("意图类型不合法");
+        }
+        return actualKind;
+    }
+
+    private Integer normalizeEnabled(Integer enabled) {
+        if (enabled == null) {
+            return 1;
+        }
+        if (!Objects.equals(enabled, 0) && !Objects.equals(enabled, 1)) {
+            throw new ClientException("启用状态不合法");
+        }
+        return enabled;
     }
 
     private List<IntentNodeDO> listAndValidateTargetNodes(List<String> ids) {
         Assert.notEmpty(ids, () -> new ClientException("请至少选择一个节点"));
-        List<String> normalizedIds = ids.stream().filter(Objects::nonNull).distinct().collect(Collectors.toList());
+        if (ids.size() > MAX_BATCH_NODE_COUNT) {
+            throw new ClientException("单次最多操作" + MAX_BATCH_NODE_COUNT + "个节点");
+        }
+        List<String> normalizedIds = ids.stream()
+                .map(id -> normalizeOptionalId(id, "节点ID"))
+                .filter(StrUtil::isNotBlank)
+                .distinct()
+                .collect(Collectors.toList());
         Assert.notEmpty(normalizedIds, () -> new ClientException("节点ID不能为空"));
         List<IntentNodeDO> targetNodes = this.list(new LambdaQueryWrapper<IntentNodeDO>()
                 .in(IntentNodeDO::getId, normalizedIds)
@@ -459,5 +506,69 @@ public class IntentTreeServiceImpl extends ServiceImpl<IntentNodeMapper, IntentN
                 .limit(3)
                 .map(item -> StrUtil.blankToDefault(item.getName(), item.getIntentCode()))
                 .collect(Collectors.joining("、"));
+    }
+
+    private String resolveCollectionName(String kbId) {
+        if (StrUtil.isBlank(kbId)) {
+            return null;
+        }
+        String normalizedKbId = normalizeRequiredId(kbId, "知识库ID");
+        var knowledgeBase = knowledgeBaseMapper.selectById(normalizedKbId);
+        if (knowledgeBase == null) {
+            throw new ClientException("知识库不存在");
+        }
+        return knowledgeBase.getCollectionName();
+    }
+
+    private String normalizeRequiredText(String value, int maxLength, String fieldName) {
+        String text = StrUtil.trimToNull(value);
+        Assert.notBlank(text, () -> new ClientException(fieldName + "不能为空"));
+        if (text.length() > maxLength) {
+            throw new ClientException(fieldName + "长度不能超过" + maxLength + "个字符");
+        }
+        return text;
+    }
+
+    private String normalizeOptionalText(String value, int maxLength, String fieldName) {
+        String text = StrUtil.trimToNull(value);
+        if (text != null && text.length() > maxLength) {
+            throw new ClientException(fieldName + "长度不能超过" + maxLength + "个字符");
+        }
+        return text;
+    }
+
+    private String normalizeRequiredId(String value, String fieldName) {
+        String text = normalizeOptionalId(value, fieldName);
+        Assert.notBlank(text, () -> new ClientException(fieldName + "不能为空"));
+        return text;
+    }
+
+    private String normalizeOptionalId(String value, String fieldName) {
+        String text = StrUtil.trimToNull(value);
+        if (text == null) {
+            return null;
+        }
+        if (text.length() > MAX_ID_LENGTH || !text.matches("\\d{1,20}")) {
+            throw new ClientException(fieldName + "不合法");
+        }
+        return text;
+    }
+
+    private String normalizePromptText(String value, String fieldName) {
+        return normalizeOptionalText(value, MAX_PROMPT_TEXT_LENGTH, fieldName);
+    }
+
+    private String normalizeExamples(List<String> examples) {
+        if (examples == null) {
+            return null;
+        }
+        if (examples.size() > MAX_EXAMPLES_COUNT) {
+            throw new ClientException("示例问题数量不能超过" + MAX_EXAMPLES_COUNT + "个");
+        }
+        List<String> normalized = examples.stream()
+                .map(item -> normalizeOptionalText(item, MAX_EXAMPLE_LENGTH, "示例问题"))
+                .filter(StrUtil::isNotBlank)
+                .toList();
+        return normalized.isEmpty() ? null : GSON.toJson(normalized);
     }
 }

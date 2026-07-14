@@ -34,6 +34,7 @@ import com.nageoffer.ai.ragent.ingestion.domain.pipeline.NodeConfig;
 import com.nageoffer.ai.ragent.ingestion.domain.result.NodeResult;
 import com.nageoffer.ai.ragent.ingestion.domain.settings.IndexerSettings;
 import com.nageoffer.ai.ragent.rag.core.vector.VectorSpaceId;
+import com.nageoffer.ai.ragent.rag.core.vector.VectorSpaceNames;
 import com.nageoffer.ai.ragent.rag.core.vector.VectorSpaceSpec;
 import com.nageoffer.ai.ragent.rag.core.vector.VectorStoreAdmin;
 import com.nageoffer.ai.ragent.rag.core.vector.VectorStoreService;
@@ -83,7 +84,12 @@ public class IndexerNode implements IngestionNode {
             return NodeResult.fail(new ClientException("没有可索引的分块"));
         }
         IndexerSettings settings = parseSettings(config.getSettings());
-        String collectionName = resolveCollectionName(context);
+        String collectionName;
+        try {
+            collectionName = resolveCollectionName(context);
+        } catch (ClientException ex) {
+            return NodeResult.fail(ex);
+        }
         if (!StringUtils.hasText(collectionName)) {
             return NodeResult.fail(new ClientException("索引器需要指定集合名称"));
         }
@@ -119,10 +125,13 @@ public class IndexerNode implements IngestionNode {
     }
 
     private String resolveCollectionName(IngestionContext context) {
+        String collectionName;
         if (context.getVectorSpaceId() != null && StringUtils.hasText(context.getVectorSpaceId().getLogicalName())) {
-            return context.getVectorSpaceId().getLogicalName();
+            collectionName = context.getVectorSpaceId().getLogicalName();
+        } else {
+            collectionName = ragDefaultProperties.getCollectionName();
         }
-        return ragDefaultProperties.getCollectionName();
+        return VectorSpaceNames.normalizeRequiredLogicalName(collectionName, "向量空间名称");
     }
 
     private void ensureVectorSpace(String collectionName) {

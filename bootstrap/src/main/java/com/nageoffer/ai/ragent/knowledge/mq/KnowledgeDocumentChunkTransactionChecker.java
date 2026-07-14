@@ -17,7 +17,7 @@
 
 package com.nageoffer.ai.ragent.knowledge.mq;
 
-import cn.hutool.json.JSONUtil;
+import cn.hutool.core.util.StrUtil;
 import com.nageoffer.ai.ragent.framework.mq.MessageWrapper;
 import com.nageoffer.ai.ragent.framework.mq.producer.DelegatingTransactionListener;
 import com.nageoffer.ai.ragent.framework.mq.producer.TransactionChecker;
@@ -41,6 +41,8 @@ import org.springframework.stereotype.Component;
 @RequiredArgsConstructor
 public class KnowledgeDocumentChunkTransactionChecker implements TransactionChecker {
 
+    private static final int MAX_ID_LENGTH = 20;
+
     private final KnowledgeDocumentMapper documentMapper;
     private final DelegatingTransactionListener transactionListener;
 
@@ -54,13 +56,37 @@ public class KnowledgeDocumentChunkTransactionChecker implements TransactionChec
 
     @Override
     public boolean check(MessageWrapper<?> message) {
-        log.info("[事务回查] 文档分块，消息体：{}", JSONUtil.toJsonStr(message));
-
+        if (message == null || !(message.getBody() instanceof KnowledgeDocumentChunkEvent)) {
+            log.warn("[事务回查] 文档分块消息体无效");
+            return false;
+        }
         KnowledgeDocumentChunkEvent event = (KnowledgeDocumentChunkEvent) message.getBody();
-        String docId = event.getDocId();
-        KnowledgeDocumentDO documentDO = documentMapper.selectById(docId);
+        String normalizedDocId;
+        try {
+            normalizedDocId = normalizeOptionalId(event.getDocId(), "文档ID");
+        } catch (IllegalArgumentException e) {
+            log.warn("[事务回查] 文档分块消息文档ID不合法, keys={}", message.getKeys());
+            return false;
+        }
+        if (StrUtil.isBlank(normalizedDocId)) {
+            log.warn("[事务回查] 文档分块消息缺少文档ID, keys={}", message.getKeys());
+            return false;
+        }
+        log.info("[事务回查] 文档分块，docId={}, keys={}", normalizedDocId, message.getKeys());
+        KnowledgeDocumentDO documentDO = documentMapper.selectById(normalizedDocId);
 
         return documentDO != null
                 && DocumentStatus.RUNNING.getCode().equals(documentDO.getStatus());
+    }
+
+    private String normalizeOptionalId(String value, String fieldName) {
+        String text = StrUtil.trimToNull(value);
+        if (text == null) {
+            return null;
+        }
+        if (text.length() > MAX_ID_LENGTH || !text.matches("\\d{1,20}")) {
+            throw new IllegalArgumentException(fieldName + "不合法");
+        }
+        return text;
     }
 }

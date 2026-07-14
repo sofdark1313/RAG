@@ -130,9 +130,7 @@ public class GlobalExceptionHandler {
     }
 
     private String getUrl(HttpServletRequest request) {
-        if (StrUtil.isBlank(request.getQueryString())) {
-            return request.getRequestURL().toString();
-        }
-        return request.getRequestURL().toString() + "?" + request.getQueryString();
+        // 异常日志不记录 query string，避免 GET 参数中的问题正文、Token 等敏感信息进入日志。
+        return request.getRequestURL().toString();
     }
 }

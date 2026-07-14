@@ -37,6 +37,7 @@ import lombok.extern.slf4j.Slf4j;
 import org.springframework.stereotype.Service;
 import org.springframework.transaction.annotation.Transactional;
 
+import java.util.Date;
 import java.util.List;
 import java.util.stream.Collectors;
 
@@ -49,6 +50,9 @@ import java.util.stream.Collectors;
 @RequiredArgsConstructor
 public class ConversationServiceImpl implements ConversationService {
 
+    private static final int MAX_USER_ID_LENGTH = 20;
+    private static final int MAX_QUESTION_LENGTH = 4000;
+
     private final ConversationMapper conversationMapper;
     private final ConversationMessageMapper messageMapper;
     private final ConversationSummaryMapper summaryMapper;
@@ -57,13 +61,14 @@ public class ConversationServiceImpl implements ConversationService {
 
     @Override
     public List<ConversationVO> listByUserId(String userId) {
-        if (StrUtil.isBlank(userId)) {
+        String normalizedUserId = normalizeOptionalId(userId, "用户ID");
+        if (StrUtil.isBlank(normalizedUserId)) {
             return List.of();
         }
 
         List<ConversationDO> records = conversationMapper.selectList(
                 Wrappers.lambdaQuery(ConversationDO.class)
-                        .eq(ConversationDO::getUserId, userId)
+                        .eq(ConversationDO::getUserId, normalizedUserId)
                         .eq(ConversationDO::getDeleted, 0)
                         .orderByDesc(ConversationDO::getLastTime)
         );
@@ -82,63 +87,68 @@ public class ConversationServiceImpl implements ConversationService {
 
     @Override
     public void createOrUpdate(ConversationCreateBO request) {
-        String userId = request.getUserId();
-        String conversationId = request.getConversationId();
-        String question = request.getQuestion();
-        if (StrUtil.isBlank(userId)) {
-            throw new ClientException("用户信息缺失");
+        if (request == null) {
+            throw new ClientException("请求内容不能为空");
         }
+        String normalizedUserId = normalizeRequiredId(request.getUserId(), "用户ID");
+        String normalizedConversationId = normalizeConversationId(request.getConversationId());
+        String question = normalizeRequiredText(request.getQuestion(), MAX_QUESTION_LENGTH, "用户问题");
 
         ConversationDO existing = conversationMapper.selectOne(
                 Wrappers.lambdaQuery(ConversationDO.class)
-                        .eq(ConversationDO::getConversationId, conversationId)
-                        .eq(ConversationDO::getUserId, userId)
+                        .eq(ConversationDO::getConversationId, normalizedConversationId)
+                        .eq(ConversationDO::getUserId, normalizedUserId)
                         .eq(ConversationDO::getDeleted, 0)
         );
 
         if (existing == null) {
             String title = titleGenerator.generate(question);
             ConversationDO record = ConversationDO.builder()
-                    .conversationId(conversationId)
-                    .userId(userId)
+                    .conversationId(normalizedConversationId)
+                    .userId(normalizedUserId)
                     .title(title)
-                    .lastTime(request.getLastTime())
+                    .lastTime(request.getLastTime() == null ? new Date() : request.getLastTime())
                     .build();
             conversationMapper.insert(record);
             return;
         }
 
-        existing.setLastTime(request.getLastTime());
+        existing.setLastTime(request.getLastTime() == null ? new Date() : request.getLastTime());
         conversationMapper.updateById(existing);
     }
 
     @Override
     public void rename(String conversationId, ConversationUpdateRequest request) {
         String userId = UserContext.getUserId();
-        if (StrUtil.isBlank(conversationId) || StrUtil.isBlank(userId)) {
+        if (StrUtil.isBlank(userId)) {
             throw new ClientException("会话信息缺失");
         }
+        String normalizedConversationId = normalizeConversationId(conversationId);
+        String normalizedUserId = normalizeRequiredId(userId, "用户ID");
 
-        String title = request.getTitle();
+        if (request == null) {
+            throw new ClientException("请求内容不能为空");
+        }
+        String title = StrUtil.trimToNull(request.getTitle());
         if (StrUtil.isBlank(title)) {
             throw new ClientException("会话名称不能为空");
         }
-        int maxLen = memoryProperties.getTitleMaxLength();
+        int maxLen = memoryProperties.getTitleMaxLength() == null ? 30 : memoryProperties.getTitleMaxLength();
         if (title.length() > maxLen) {
             throw new ClientException("会话名称长度不能超过" + maxLen + "个字符");
         }
 
         ConversationDO record = conversationMapper.selectOne(
                 Wrappers.lambdaQuery(ConversationDO.class)
-                        .eq(ConversationDO::getConversationId, conversationId)
-                        .eq(ConversationDO::getUserId, userId)
+                        .eq(ConversationDO::getConversationId, normalizedConversationId)
+                        .eq(ConversationDO::getUserId, normalizedUserId)
                         .eq(ConversationDO::getDeleted, 0)
         );
         if (record == null) {
             throw new ClientException("会话不存在");
         }
 
-        record.setTitle(title.trim());
+        record.setTitle(title);
         conversationMapper.updateById(record);
     }
 
@@ -146,14 +156,16 @@ public class ConversationServiceImpl implements ConversationService {
     @Override
     public void delete(String conversationId) {
         String userId = UserContext.getUserId();
-        if (StrUtil.isBlank(conversationId) || StrUtil.isBlank(userId)) {
+        if (StrUtil.isBlank(userId)) {
             throw new ClientException("会话信息缺失");
         }
+        String normalizedConversationId = normalizeConversationId(conversationId);
+        String normalizedUserId = normalizeRequiredId(userId, "用户ID");
 
         ConversationDO record = conversationMapper.selectOne(
                 Wrappers.lambdaQuery(ConversationDO.class)
-                        .eq(ConversationDO::getConversationId, conversationId)
-                        .eq(ConversationDO::getUserId, userId)
+                        .eq(ConversationDO::getConversationId, normalizedConversationId)
+                        .eq(ConversationDO::getUserId, normalizedUserId)
                         .eq(ConversationDO::getDeleted, 0)
         );
         if (record == null) {
@@ -163,16 +175,59 @@ public class ConversationServiceImpl implements ConversationService {
         conversationMapper.deleteById(record.getId());
         messageMapper.delete(
                 Wrappers.lambdaQuery(ConversationMessageDO.class)
-                        .eq(ConversationMessageDO::getConversationId, conversationId)
-                        .eq(ConversationMessageDO::getUserId, userId)
+                        .eq(ConversationMessageDO::getConversationId, normalizedConversationId)
+                        .eq(ConversationMessageDO::getUserId, normalizedUserId)
                         .eq(ConversationMessageDO::getDeleted, 0)
         );
         summaryMapper.delete(
                 Wrappers.lambdaQuery(ConversationSummaryDO.class)
-                        .eq(ConversationSummaryDO::getConversationId, conversationId)
-                        .eq(ConversationSummaryDO::getUserId, userId)
+                        .eq(ConversationSummaryDO::getConversationId, normalizedConversationId)
+                        .eq(ConversationSummaryDO::getUserId, normalizedUserId)
                         .eq(ConversationSummaryDO::getDeleted, 0)
         );
+    }
+
+    private String normalizeConversationId(String conversationId) {
+        String text = normalizeRequiredText(conversationId, 20, "会话ID");
+        if (!text.matches("\\d{1,20}")) {
+            throw new ClientException("会话ID不合法");
+        }
+        return text;
+    }
+
+    private String normalizeRequiredId(String value, String fieldName) {
+        String text = normalizeOptionalId(value, fieldName);
+        if (StrUtil.isBlank(text)) {
+            throw new ClientException(fieldName + "不能为空");
+        }
+        return text;
+    }
+
+    private String normalizeOptionalId(String value, String fieldName) {
+        String text = normalizeOptionalText(value, MAX_USER_ID_LENGTH, fieldName);
+        if (text == null) {
+            return null;
+        }
+        if (!text.matches("\\d{1,20}")) {
+            throw new ClientException(fieldName + "不合法");
+        }
+        return text;
+    }
+
+    private String normalizeRequiredText(String value, int maxLength, String fieldName) {
+        String text = normalizeOptionalText(value, maxLength, fieldName);
+        if (StrUtil.isBlank(text)) {
+            throw new ClientException(fieldName + "不能为空");
+        }
+        return text;
+    }
+
+    private String normalizeOptionalText(String value, int maxLength, String fieldName) {
+        String text = StrUtil.trimToNull(value);
+        if (text != null && text.length() > maxLength) {
+            throw new ClientException(fieldName + "长度不能超过" + maxLength + "个字符");
+        }
+        return text;
     }
 
 }

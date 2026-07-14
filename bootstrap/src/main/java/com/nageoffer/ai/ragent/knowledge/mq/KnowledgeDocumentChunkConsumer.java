@@ -17,6 +17,7 @@
 
 package com.nageoffer.ai.ragent.knowledge.mq;
 
+import cn.hutool.core.util.StrUtil;
 import com.nageoffer.ai.ragent.framework.context.LoginUser;
 import com.nageoffer.ai.ragent.framework.context.UserContext;
 import com.nageoffer.ai.ragent.framework.mq.MessageWrapper;
@@ -41,19 +42,47 @@ import org.springframework.stereotype.Component;
 )
 public class KnowledgeDocumentChunkConsumer implements RocketMQListener<MessageWrapper<KnowledgeDocumentChunkEvent>> {
 
+    private static final int MAX_ID_LENGTH = 20;
+
     private final KnowledgeDocumentService documentService;
 
     @Override
     public void onMessage(MessageWrapper<KnowledgeDocumentChunkEvent> message) {
+        if (message == null || message.getBody() == null) {
+            log.warn("[消费者] 文档分块消息体为空");
+            return;
+        }
         KnowledgeDocumentChunkEvent event = message.getBody();
+        String docId;
+        try {
+            docId = normalizeOptionalId(event.getDocId(), "文档ID");
+        } catch (IllegalArgumentException e) {
+            log.warn("[消费者] 文档分块消息文档ID不合法, keys={}", message.getKeys());
+            return;
+        }
+        if (StrUtil.isBlank(docId)) {
+            log.warn("[消费者] 文档分块消息缺少文档ID, keys={}", message.getKeys());
+            return;
+        }
 
-        log.info("[消费者] 开始消费文档分块任务，docId={}, keys={}", event.getDocId(), message.getKeys());
+        log.info("[消费者] 开始消费文档分块任务，docId={}, keys={}", docId, message.getKeys());
 
         UserContext.set(LoginUser.builder().username(event.getOperator()).build());
         try {
-            documentService.executeChunk(event.getDocId());
+            documentService.executeChunk(docId);
         } finally {
             UserContext.clear();
         }
+    }
+
+    private String normalizeOptionalId(String value, String fieldName) {
+        String text = StrUtil.trimToNull(value);
+        if (text == null) {
+            return null;
+        }
+        if (text.length() > MAX_ID_LENGTH || !text.matches("\\d{1,20}")) {
+            throw new IllegalArgumentException(fieldName + "不合法");
+        }
+        return text;
     }
 }

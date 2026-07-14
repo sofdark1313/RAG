@@ -59,7 +59,7 @@ public class IntentResolver {
                             try {
                                 return new SubQuestionIntent(q, classifyIntents(q));
                             } catch (Exception e) {
-                                log.error("子问题意图分类失败，降级为空意图，question：{}", q, e);
+                                log.error("子问题意图分类失败，降级为空意图，questionLength={}", lengthOf(q), e);
                                 return new SubQuestionIntent(q, List.of());
                             }
                         },
@@ -219,5 +219,9 @@ public class IntentResolver {
             result.add(new SubQuestionIntent(original.subQuestion(), retained));
         }
         return result;
+    }
+
+    private int lengthOf(String text) {
+        return text == null ? 0 : text.length();
     }
 }

@@ -141,8 +141,9 @@ public abstract class AbstractOpenAIStyleEmbeddingClient implements EmbeddingCli
         JsonObject json;
         try (Response response = httpClient.newCall(request).execute()) {
             if (!response.isSuccessful()) {
-                String errBody = HttpResponseHelper.readBody(response.body());
-                log.warn("{} embedding 请求失败: status={}, body={}", provider(), response.code(), errBody);
+                String responsePreview = HttpResponseHelper.readBodyPreview(response.body());
+                log.warn("{} embedding 请求失败: status={}, responsePreviewLength={}",
+                        provider(), response.code(), responsePreview.length());
                 throw new ModelClientException(
                         provider() + " embedding 请求失败: HTTP " + response.code(),
                         ModelClientErrorType.fromHttpStatus(response.code()),

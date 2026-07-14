@@ -19,12 +19,14 @@ package com.nageoffer.ai.ragent.ingestion.strategy.fetcher;
 
 import com.google.gson.JsonObject;
 import com.google.gson.JsonParser;
+import com.nageoffer.ai.ragent.core.http.HttpUrlSecurityValidator;
 import com.nageoffer.ai.ragent.framework.exception.ServiceException;
 import com.nageoffer.ai.ragent.ingestion.domain.context.DocumentSource;
 import com.nageoffer.ai.ragent.ingestion.domain.enums.SourceType;
 import com.nageoffer.ai.ragent.ingestion.util.HttpClientHelper;
 import com.nageoffer.ai.ragent.ingestion.util.MimeTypeDetector;
 import lombok.RequiredArgsConstructor;
+import okhttp3.HttpUrl;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
@@ -51,6 +53,7 @@ public class FeishuFetcher implements DocumentFetcher {
     @Qualifier("syncHttpClient")
     private final OkHttpClient okHttpClient;
     private final HttpClientHelper httpClientHelper;
+    private final HttpUrlSecurityValidator urlSecurityValidator;
 
     @Override
     public SourceType supportedType() {
@@ -134,11 +137,12 @@ public class FeishuFetcher implements DocumentFetcher {
             payload.addProperty("app_id", appId);
             payload.addProperty("app_secret", appSecret);
 
+            HttpUrl checkedTokenUrl = urlSecurityValidator.validate(TOKEN_URL);
             Request request = new Request.Builder()
-                    .url(TOKEN_URL)
+                    .url(checkedTokenUrl)
                     .post(RequestBody.create(payload.toString(), MediaType.parse("application/json")))
                     .build();
-            try (Response response = okHttpClient.newCall(request).execute()) {
+            try (Response response = secureClient().newCall(request).execute()) {
                 if (!response.isSuccessful() || response.body() == null) {
                     throw new ServiceException("飞书令牌请求失败: " + response.code());
                 }
@@ -152,6 +156,12 @@ public class FeishuFetcher implements DocumentFetcher {
         } catch (Exception e) {
             throw new ServiceException("飞书令牌请求失败: " + e.getMessage());
         }
+    }
+
+    private OkHttpClient secureClient() {
+        return okHttpClient.newBuilder()
+                .dns(urlSecurityValidator.secureDns())
+                .build();
     }
 
     private String extractDocxContent(byte[] bytes) {
