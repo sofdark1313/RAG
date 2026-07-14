@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import { useThemeStore } from "@/stores/themeStore";
 import { storage } from "@/utils/storage";
@@ -50,17 +50,6 @@ function useSystemTheme(initialMatches: boolean) {
   return fake;
 }
 
-afterEach(() => {
-  const setPreference = Reflect.get(
-    useThemeStore.getState(),
-    "setPreference"
-  );
-  if (typeof setPreference === "function") {
-    setPreference("light");
-  }
-  vi.unstubAllGlobals();
-});
-
 describe("theme store", () => {
   it("defaults to system and applies a dark system theme", () => {
     useSystemTheme(true);
@@ -70,6 +59,7 @@ describe("theme store", () => {
     const state = useThemeStore.getState();
     expect(state.preference).toBe("system");
     expect(state.resolvedTheme).toBe("dark");
+    expect(state.theme).toBe(state.resolvedTheme);
     expect(document.documentElement).toHaveClass("dark");
     expect(document.documentElement.style.colorScheme).toBe("dark");
   });
@@ -83,6 +73,7 @@ describe("theme store", () => {
     const state = useThemeStore.getState();
     expect(state.preference).toBe("light");
     expect(state.resolvedTheme).toBe("light");
+    expect(state.theme).toBe(state.resolvedTheme);
     expect(window.localStorage.getItem("ragent_theme")).toBe("light");
     expect(document.documentElement).not.toHaveClass("dark");
     expect(document.documentElement.style.colorScheme).toBe("light");
@@ -106,7 +97,9 @@ describe("theme store", () => {
 
     fake.emit(false);
 
-    expect(useThemeStore.getState().resolvedTheme).toBe("light");
+    const state = useThemeStore.getState();
+    expect(state.resolvedTheme).toBe("light");
+    expect(state.theme).toBe(state.resolvedTheme);
     expect(document.documentElement).not.toHaveClass("dark");
     expect(document.documentElement.style.colorScheme).toBe("light");
   });
@@ -137,6 +130,7 @@ describe("theme store", () => {
     const state = useThemeStore.getState();
     expect(state.preference).toBe("light");
     expect(state.resolvedTheme).toBe("light");
+    expect(state.theme).toBe(state.resolvedTheme);
     expect(window.localStorage.getItem("ragent_theme")).toBe("light");
   });
 
