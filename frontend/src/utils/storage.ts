@@ -1,5 +1,7 @@
 import type { User } from "@/types";
 
+export type StoredThemePreference = "system" | "light" | "dark";
+
 const TOKEN_KEY = "ragent_token";
 const USER_KEY = "ragent_user";
 const THEME_KEY = "ragent_theme";
@@ -57,10 +59,13 @@ export const storage = {
     safeRemove(TOKEN_KEY);
     safeRemove(USER_KEY);
   },
-  getTheme(): string | null {
-    return safeGet(THEME_KEY);
+  getTheme(): StoredThemePreference | null {
+    const theme = safeGet(THEME_KEY);
+    return theme === "system" || theme === "light" || theme === "dark"
+      ? theme
+      : null;
   },
-  setTheme(theme: string) {
+  setTheme(theme: StoredThemePreference) {
     safeSet(THEME_KEY, theme);
   }
 };

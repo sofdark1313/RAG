@@ -6,7 +6,8 @@ import { useThemeStore } from "@/stores/themeStore";
 
 afterEach(() => {
   cleanup();
-  useThemeStore.setState({ theme: "light" });
+  useThemeStore.getState().setPreference("light");
+  useThemeStore.setState({ preference: "system", resolvedTheme: "light" });
   window.localStorage.clear();
   document.documentElement.className = "";
   document.documentElement.style.colorScheme = "";
