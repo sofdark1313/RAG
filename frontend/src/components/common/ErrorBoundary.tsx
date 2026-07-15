@@ -31,15 +31,15 @@ export class ErrorBoundary extends React.Component<React.PropsWithChildren, Erro
     }
 
     return (
-      <div className="flex min-h-screen items-center justify-center px-6">
-        <div className="chat-surface max-w-md rounded-3xl p-8 text-center">
-          <p className="font-display text-xl font-semibold">出现了一点问题</p>
-          <p className="mt-3 text-sm text-muted-foreground">{this.state.message}</p>
-          <Button className="mt-6" onClick={this.handleReload}>
+      <main className="error-state">
+        <div className="state-card">
+          <h1>页面暂时无法显示</h1>
+          <p>{this.state.message || "页面运行时发生错误。"}</p>
+          <Button className="mt-6 rounded-lg shadow-none" onClick={this.handleReload}>
             刷新
           </Button>
         </div>
-      </div>
+      </main>
     );
   }
 }

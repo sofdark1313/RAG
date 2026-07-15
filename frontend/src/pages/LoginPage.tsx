@@ -1,10 +1,10 @@
 import * as React from "react";
-import { Eye, EyeOff, Lock, User } from "lucide-react";
+import { Eye, EyeOff } from "lucide-react";
 import { useNavigate } from "react-router-dom";
 
+import { ThemeToggle } from "@/components/common/ThemeToggle";
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
-import { Checkbox } from "@/components/ui/checkbox";
 import { useAuthStore } from "@/stores/authStore";
 
 export function LoginPage() {
@@ -24,9 +24,6 @@ export function LoginPage() {
     }
     try {
       await login(form.username.trim(), form.password.trim());
-      if (!remember) {
-        // 如需仅在内存中保存登录态，可在此扩展。
-      }
       navigate("/chat");
     } catch (err) {
       setError((err as Error).message || "登录失败，请稍后重试。");
@@ -34,68 +31,54 @@ export function LoginPage() {
   };
 
   return (
-    <div className="relative flex min-h-screen items-center justify-center px-4">
-      <div className="absolute inset-0 bg-gradient-to-br from-slate-50 via-blue-50/50 to-blue-100 dark:from-slate-950 dark:via-slate-900 dark:to-slate-900" />
-      <div className="relative z-10 w-full max-w-md rounded-3xl border border-border/70 bg-background/80 p-8 shadow-soft backdrop-blur">
-        <div className="mb-6">
-          <p className="font-display text-2xl font-semibold">欢迎回来</p>
-          <p className="mt-1 text-sm text-muted-foreground">
-            登录后继续你的检索增强对话。
-          </p>
-        </div>
-        <form className="space-y-4" onSubmit={handleSubmit}>
-          <div className="space-y-2">
-            <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              用户名
-            </label>
-            <div className="relative">
-              <User className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
-              <Input
-                placeholder="请输入用户名"
-                value={form.username}
-                onChange={(event) => setForm((prev) => ({ ...prev, username: event.target.value }))}
-                className="pl-10"
-                autoComplete="username"
-              />
-            </div>
+    <main className="login-page">
+      <div className="login-page__theme"><ThemeToggle /></div>
+      <section className="login-card">
+        <div className="login-card__brand">R</div>
+        <h1>登录 Ragent</h1>
+        <p>使用管理员分配的账号继续访问知识问答。</p>
+
+        <form className="login-form" onSubmit={handleSubmit}>
+          <div className="login-field">
+            <label htmlFor="username">用户名</label>
+            <Input
+              id="username"
+              value={form.username}
+              onChange={(event) => setForm((prev) => ({ ...prev, username: event.target.value }))}
+              placeholder="请输入用户名"
+              autoComplete="username"
+            />
           </div>
-          <div className="space-y-2">
-            <label className="text-xs font-semibold uppercase tracking-wide text-muted-foreground">
-              密码
-            </label>
-            <div className="relative">
-              <Lock className="absolute left-3 top-1/2 h-4 w-4 -translate-y-1/2 text-muted-foreground" />
+          <div className="login-field">
+            <label htmlFor="password">密码</label>
+            <div className="login-password">
               <Input
+                id="password"
                 type={showPassword ? "text" : "password"}
-                placeholder="请输入密码"
                 value={form.password}
                 onChange={(event) => setForm((prev) => ({ ...prev, password: event.target.value }))}
-                className="pl-10 pr-10"
+                placeholder="请输入密码"
                 autoComplete="current-password"
               />
               <button
                 type="button"
                 onClick={() => setShowPassword((prev) => !prev)}
-                className="absolute right-3 top-1/2 -translate-y-1/2 text-muted-foreground"
-                aria-label="显示或隐藏密码"
+                aria-label={showPassword ? "隐藏密码" : "显示密码"}
               >
                 {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
             </div>
           </div>
-          <div className="flex items-center justify-between text-sm">
-            <label className="flex items-center gap-2 text-muted-foreground">
-              <Checkbox checked={remember} onCheckedChange={(value) => setRemember(Boolean(value))} />
-              记住我
-            </label>
-            <span className="text-xs text-muted-foreground">账号由管理员初始化</span>
+          <div className="login-options">
+            <label><input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} />记住我</label>
+            <span>账号由管理员初始化</span>
           </div>
-          {error ? <p className="text-sm text-destructive">{error}</p> : null}
-          <Button type="submit" className="w-full" disabled={isLoading}>
-            {isLoading ? "正在登录..." : "登录"}
+          {error ? <p className="login-error" role="alert">{error}</p> : null}
+          <Button type="submit" className="w-full rounded-lg shadow-none" disabled={isLoading}>
+            {isLoading ? "正在登录…" : "登录"}
           </Button>
         </form>
-      </div>
-    </div>
+      </section>
+    </main>
   );
 }

@@ -7,9 +7,9 @@ interface LoadingProps {
   className?: string;
 }
 
-export function Loading({ label = "加载中...", className }: LoadingProps) {
+export function Loading({ label = "加载中…", className }: LoadingProps) {
   return (
-    <div className={cn("flex items-center gap-2 text-muted-foreground", className)}>
+    <div className={cn("flex items-center gap-2 text-muted-foreground", className)} role="status">
       <Loader2 className="h-4 w-4 animate-spin" />
       <span className="text-sm">{label}</span>
     </div>

@@ -8,7 +8,6 @@ import {
   ClipboardList,
   Database,
   GitBranch,
-  Github,
   Layers,
   LayoutDashboard,
   Lightbulb,
@@ -45,6 +44,7 @@ import {
   type KnowledgeDocumentSearchItem
 } from "@/services/knowledgeService";
 import { Avatar } from "@/components/common/Avatar";
+import { ThemeToggle } from "@/components/common/ThemeToggle";
 
 type MenuChild = {
   path: string;
@@ -178,7 +178,6 @@ export function AdminLayout() {
     newPassword: "",
     confirmPassword: ""
   });
-  const [starCount, setStarCount] = useState<number | null>(null);
   const [openGroups, setOpenGroups] = useState<Record<string, boolean>>({ ingestion: true, intent: true });
   const [kbQuery, setKbQuery] = useState("");
   const [kbOptions, setKbOptions] = useState<KnowledgeBase[]>([]);
@@ -193,25 +192,6 @@ export function AdminLayout() {
     await logout();
     navigate("/login");
   };
-
-  useEffect(() => {
-    let active = true;
-    fetch("https://api.github.com/repos/nageoffer/ragent")
-      .then((res) => (res.ok ? res.json() : null))
-      .then((data) => {
-        if (!active) return;
-        const count = typeof data?.stargazers_count === "number" ? data.stargazers_count : null;
-        setStarCount(count);
-      })
-      .catch(() => {
-        if (active) {
-          setStarCount(null);
-        }
-      });
-    return () => {
-      active = false;
-    };
-  }, []);
 
   useEffect(() => {
     if (!searchFocused) return;
@@ -317,13 +297,6 @@ export function AdminLayout() {
   const avatarUrl = user?.avatar?.trim();
   const showAvatar = Boolean(avatarUrl);
   const roleLabel = user?.role === "admin" ? "管理员" : "成员";
-  const starLabel = useMemo(() => {
-    if (starCount === null) return "--";
-    if (starCount < 1000) return String(starCount);
-    const rounded = Math.round((starCount / 1000) * 10) / 10;
-    const text = String(rounded).replace(/\.0$/, "");
-    return `${text}k`;
-  }, [starCount]);
   const isIngestionActive = location.pathname.startsWith("/admin/ingestion");
   const isIntentActive =
     location.pathname.startsWith("/admin/intent-tree") || location.pathname.startsWith("/admin/intent-list");
@@ -442,7 +415,7 @@ export function AdminLayout() {
             {!collapsed && (
               <div className="min-w-0">
                 <h1 className="admin-sidebar__title">Ragent AI 管理后台</h1>
-                <p className="admin-sidebar__subtitle">Knowledge Console</p>
+                <p className="admin-sidebar__subtitle">内部管理</p>
               </div>
             )}
           </div>
@@ -521,8 +494,8 @@ export function AdminLayout() {
                             type="button"
                             onClick={() => setOpenGroups((prev) => ({ ...prev, [groupId]: !prev[groupId] }))}
                             className={cn(
-                              "admin-sidebar__item admin-sidebar__item--group w-full text-white/60",
-                              isGroupActive && "admin-sidebar__item--group-active text-white"
+                              "admin-sidebar__item admin-sidebar__item--group w-full",
+                              isGroupActive && "admin-sidebar__item--group-active"
                             )}
                           >
                             <span
@@ -534,9 +507,9 @@ export function AdminLayout() {
                         <GroupIcon className="admin-sidebar__item-icon" />
                         <span className="flex-1 text-left">{item.label}</span>
                         {isOpen ? (
-                          <ChevronDown className="h-4 w-4 text-white/60" />
+                          <ChevronDown className="h-4 w-4" />
                         ) : (
-                          <ChevronRight className="h-4 w-4 text-white/60" />
+                          <ChevronRight className="h-4 w-4" />
                         )}
                       </button>
                       {isOpen ? (
@@ -681,7 +654,7 @@ export function AdminLayout() {
                 ) : null}
               </div>
             </div>
-            <div className="flex items-center gap-2">
+            <div className="admin-topbar__actions">
               <Button
                 variant="outline"
                 className="hidden items-center gap-2 sm:inline-flex"
@@ -690,19 +663,7 @@ export function AdminLayout() {
                 <MessageSquare className="h-4 w-4" />
                 返回聊天
               </Button>
-              <a
-                href="https://github.com/nageoffer/ragent"
-                target="_blank"
-                rel="noreferrer"
-                className="flex items-center gap-2 rounded-xl border border-slate-200 bg-white px-3 py-1.5 text-sm text-slate-600 transition hover:bg-slate-100 hover:text-slate-900"
-                aria-label="打开 GitHub 仓库"
-              >
-                <Github className="h-4 w-4" />
-                <span className="font-medium">Star</span>
-                <span className="rounded-full bg-slate-100 px-2 py-0.5 text-xs text-slate-600">
-                  {starLabel}
-                </span>
-              </a>
+              <ThemeToggle />
               <DropdownMenu>
                 <DropdownMenuTrigger asChild>
                   <button

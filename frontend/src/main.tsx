@@ -6,6 +6,8 @@ import { useAuthStore } from "@/stores/authStore";
 import { useThemeStore } from "@/stores/themeStore";
 import "@/styles/globals.css";
 import "@/styles/theme.css";
+import "@/styles/chat.css";
+import "@/styles/admin.css";
 
 useThemeStore.getState().initialize();
 useAuthStore.getState().checkAuth();
