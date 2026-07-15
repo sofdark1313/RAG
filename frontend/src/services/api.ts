@@ -1,7 +1,7 @@
 import axios from "axios";
-import { toast } from "sonner";
 
 import { storage } from "@/utils/storage";
+import { toast } from "@/utils/toast";
 
 const API_BASE_URL = import.meta.env.VITE_API_BASE_URL || "";
 
@@ -32,8 +32,7 @@ api.interceptors.response.use(
     if (payload && typeof payload === "object" && "code" in payload) {
       if (payload.code !== "0") {
         const message = payload.message || "请求失败";
-        const isAuthExpired = typeof message === "string" && message.includes("未登录");
-        if (isAuthExpired) {
+        if (typeof message === "string" && message.includes("未登录")) {
           storage.clearAuth();
           if (window.location.pathname !== "/login") {
             window.location.href = "/login";
@@ -54,7 +53,7 @@ api.interceptors.response.use(
     }
     const responseData = error?.response?.data;
     if (responseData && typeof responseData === "object" && "message" in responseData && responseData.message) {
-      toast.error(responseData.message);
+      toast.error(String(responseData.message));
     } else if (error?.code === "ERR_NETWORK") {
       toast.error("网络错误，请检查网络连接");
     } else {
