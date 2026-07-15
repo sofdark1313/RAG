@@ -323,13 +323,13 @@ const useHealthStatus = (performance: DashboardPerformance | null, overview: Das
 // ============================================================================
 
 const DashCard = ({ children, className }: { children: ReactNode; className?: string }) => (
-    <div className={cn("rounded-2xl bg-white p-5 shadow-[0_1px_3px_rgba(0,0,0,0.08)]", className)}>
+    <section className={cn("dashboard-card", className)}>
       {children}
-    </div>
+    </section>
 );
 
 const CardTitle = ({ children }: { children: ReactNode }) => (
-    <h3 className="mb-4 text-sm font-semibold text-slate-700">{children}</h3>
+    <h2 className="dashboard-card__title">{children}</h2>
 );
 
 const LoadingBlock = ({ className }: { className?: string }) => (
@@ -360,21 +360,24 @@ const DashboardHeader = ({
   onRefresh: () => void;
   onTimeWindowChange: (window: DashboardTimeWindow) => void;
 }) => (
-    <header className="mb-3 flex items-center justify-between">
-      <h1 className="text-4xl font-bold tracking-tight text-slate-900">Dashboard</h1>
+    <header className="dashboard-header">
+      <div>
+        <h1 className="dashboard-header__title">Dashboard</h1>
+        <p className="dashboard-header__subtitle">系统运行与知识问答概览</p>
+      </div>
 
-      <div className="flex items-center gap-3">
-        <div className="inline-flex rounded-lg bg-white p-1 shadow-sm">
+      <div className="dashboard-header__actions">
+        <div className="dashboard-range">
           {WINDOW_OPTIONS.map((opt) => (
               <button
                   key={opt.value}
                   onClick={() => onTimeWindowChange(opt.value)}
                   disabled={loading}
                   className={cn(
-                      "rounded-md px-3 py-1.5 text-sm font-medium transition-all",
+                      "dashboard-range__item",
                       timeWindow === opt.value
-                          ? "bg-slate-900 text-white"
-                          : "text-slate-500 hover:text-slate-700"
+                          ? "is-active"
+                          : undefined
                   )}
               >
                 {opt.label}
@@ -382,8 +385,8 @@ const DashboardHeader = ({
           ))}
         </div>
 
-        <div className="flex items-center gap-2 text-sm text-slate-400">
-          <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
+        <div className="dashboard-updated">
+          <span aria-hidden="true" />
           <span>{formatLastUpdated(lastUpdated)}</span>
         </div>
 
@@ -392,7 +395,8 @@ const DashboardHeader = ({
             size="icon"
             onClick={onRefresh}
             disabled={loading}
-            className="h-9 w-9 rounded-lg border-slate-200 bg-white text-slate-500 hover:text-slate-700"
+            className="h-9 w-9"
+            aria-label="刷新 Dashboard"
         >
           <RefreshCw className={cn("h-4 w-4", loading && "animate-spin")} />
         </Button>
@@ -424,7 +428,7 @@ const KPICardItem = ({ value, label, change, icon, iconBg, iconColor }: KPICardP
           : "text-red-500";
 
   return (
-      <div className="rounded-xl bg-slate-50 p-4">
+      <div className="dashboard-kpi">
         <div className="flex items-start justify-between">
           <div>
             <p className="text-2xl font-bold tracking-tight text-slate-900">{value}</p>

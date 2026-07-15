@@ -668,13 +668,13 @@ export function AdminLayout() {
                 <DropdownMenuTrigger asChild>
                   <button
                     type="button"
-                    className="flex items-center gap-2 rounded-full border border-slate-200 bg-white px-2.5 py-1.5 text-sm text-slate-600 shadow-sm"
+                    className="admin-user-menu"
                     aria-label="用户菜单"
                   >
                     <Avatar
                       name={user?.username || "管理员"}
                       src={showAvatar ? avatarUrl : undefined}
-                      className="h-8 w-8 border-slate-200 bg-indigo-50 text-xs font-semibold text-indigo-600"
+                      className="admin-user-menu__avatar h-7 w-7 text-xs font-semibold"
                     />
                     <span className="hidden sm:inline">{user?.username || "管理员"}</span>
                     <ChevronDown className="h-4 w-4 text-slate-400" />

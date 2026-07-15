@@ -11,8 +11,7 @@ export function LoginPage() {
   const navigate = useNavigate();
   const { login, isLoading } = useAuthStore();
   const [showPassword, setShowPassword] = React.useState(false);
-  const [remember, setRemember] = React.useState(true);
-  const [form, setForm] = React.useState({ username: "admin", password: "admin" });
+  const [form, setForm] = React.useState({ username: "", password: "" });
   const [error, setError] = React.useState<string | null>(null);
 
   const handleSubmit = async (event: React.FormEvent) => {
@@ -34,9 +33,9 @@ export function LoginPage() {
     <main className="login-page">
       <div className="login-page__theme"><ThemeToggle /></div>
       <section className="login-card">
-        <div className="login-card__brand">R</div>
+        <div className="login-card__brand" aria-hidden="true">R</div>
         <h1>登录 Ragent</h1>
-        <p>使用管理员分配的账号继续访问知识问答。</p>
+        <p>使用你的账号继续访问知识问答。</p>
 
         <form className="login-form" onSubmit={handleSubmit}>
           <div className="login-field">
@@ -47,6 +46,7 @@ export function LoginPage() {
               onChange={(event) => setForm((prev) => ({ ...prev, username: event.target.value }))}
               placeholder="请输入用户名"
               autoComplete="username"
+              autoFocus
             />
           </div>
           <div className="login-field">
@@ -68,10 +68,6 @@ export function LoginPage() {
                 {showPassword ? <EyeOff className="h-4 w-4" /> : <Eye className="h-4 w-4" />}
               </button>
             </div>
-          </div>
-          <div className="login-options">
-            <label><input type="checkbox" checked={remember} onChange={(event) => setRemember(event.target.checked)} />记住我</label>
-            <span>账号由管理员初始化</span>
           </div>
           {error ? <p className="login-error" role="alert">{error}</p> : null}
           <Button type="submit" className="w-full rounded-lg shadow-none" disabled={isLoading}>
