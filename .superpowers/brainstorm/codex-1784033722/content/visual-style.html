@@ -1,0 +1,235 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>选择学术视觉方向</title>
+  <style>
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      min-width: 320px;
+      background: #e8ebee;
+      color: #15202b;
+      font-family: Inter, "Noto Sans SC", "Microsoft YaHei", sans-serif;
+    }
+    button { font: inherit; }
+    .page { max-width: 1480px; margin: 0 auto; padding: 30px; }
+    .intro { display: flex; align-items: end; justify-content: space-between; gap: 24px; margin-bottom: 20px; }
+    .intro-label { margin: 0 0 8px; color: #5e6a73; font: 600 11px/1.2 ui-monospace, monospace; letter-spacing: .16em; text-transform: uppercase; }
+    h1 { margin: 0; font: 600 clamp(25px, 3vw, 38px)/1.15 Georgia, "Noto Serif SC", serif; letter-spacing: -.02em; }
+    .intro p { max-width: 660px; margin: 10px 0 0; color: #5e6a73; font-size: 14px; line-height: 1.65; }
+    .hint { flex: 0 0 auto; border-bottom: 1px solid #aeb7be; padding-bottom: 5px; color: #5e6a73; font-size: 12px; }
+    .grid { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 16px; }
+    .option {
+      position: relative;
+      overflow: hidden;
+      padding: 0;
+      border: 1px solid #c7cdd2;
+      border-radius: 4px;
+      background: #f7f8f8;
+      color: inherit;
+      text-align: left;
+      cursor: pointer;
+      box-shadow: 0 8px 28px rgba(27, 39, 49, .08);
+      transition: transform .18s ease, border-color .18s ease, box-shadow .18s ease;
+    }
+    .option:hover { transform: translateY(-3px); border-color: #6f7e89; box-shadow: 0 14px 36px rgba(27, 39, 49, .14); }
+    .option:focus-visible { outline: 3px solid #4067d8; outline-offset: 3px; }
+    .option.selected { border-color: #15202b; box-shadow: 0 0 0 2px #15202b, 0 14px 36px rgba(27, 39, 49, .16); }
+    .choice {
+      position: absolute; z-index: 4; top: 12px; left: 12px;
+      display: grid; place-items: center; width: 28px; height: 28px;
+      border-radius: 50%; background: rgba(255,255,255,.92); color: #15202b;
+      font: 700 12px/1 ui-monospace, monospace; box-shadow: 0 2px 8px rgba(0,0,0,.14);
+    }
+    .preview { height: 430px; overflow: hidden; }
+    .meta { min-height: 176px; padding: 17px 18px 18px; border-top: 1px solid rgba(100,110,120,.18); background: #fff; }
+    .meta-top { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+    .meta h2 { margin: 0; font-size: 17px; line-height: 1.3; }
+    .meta-tag { color: #69747c; font: 500 10px/1 ui-monospace, monospace; letter-spacing: .08em; }
+    .meta p { margin: 8px 0 12px; color: #69747c; font-size: 12px; line-height: 1.6; }
+    .tokens { display: flex; flex-wrap: wrap; gap: 7px; }
+    .token { padding: 4px 7px; border: 1px solid #d8dde1; border-radius: 999px; color: #4e5a63; font-size: 10px; }
+    .swatch { display: inline-block; width: 7px; height: 7px; margin-right: 4px; border-radius: 50%; vertical-align: 0; }
+
+    /* A — evidence archive */
+    .archive { background: #e8eceb; font-family: "Noto Sans SC", "Microsoft YaHei", sans-serif; }
+    .archive .app { height: 100%; display: grid; grid-template-columns: 86px 1fr; }
+    .archive .side { background: #142a38; color: #d6e0e2; padding: 18px 11px; }
+    .archive .seal { display: grid; place-items: center; width: 32px; height: 32px; margin: 0 auto 25px; border: 1px solid #8ea4ac; font-family: Georgia, serif; }
+    .archive .nav { margin: 15px 0; padding: 8px 4px; border-left: 2px solid transparent; color: #8ea4ac; font-size: 8px; line-height: 1.3; }
+    .archive .nav.active { border-left-color: #b94c61; color: #fff; }
+    .archive .main { padding: 22px 18px; background: linear-gradient(90deg, transparent 96%, rgba(20,42,56,.05) 96%); background-size: 24px 100%; }
+    .archive .edition { color: #8a293d; font: 700 8px/1.2 ui-monospace, monospace; letter-spacing: .16em; }
+    .archive h3 { margin: 10px 0 5px; color: #162d3a; font: 600 24px/1.15 Georgia, "Noto Serif SC", serif; }
+    .archive .deck { width: 88%; color: #5b6b72; font-size: 9px; line-height: 1.6; }
+    .archive .query { margin-top: 22px; border-top: 2px solid #162d3a; border-bottom: 1px solid #aeb8b8; padding: 13px 0; color: #263d49; font: 500 11px/1.55 Georgia, "Noto Serif SC", serif; }
+    .archive .sources { display: grid; grid-template-columns: 1fr 40px; gap: 10px; margin-top: 18px; }
+    .archive .source { border-left: 1px solid #8a293d; padding: 2px 8px 9px; }
+    .archive .source small { display: block; color: #8a293d; font: 700 7px/1 ui-monospace, monospace; }
+    .archive .source p { margin: 6px 0 0; color: #40535b; font: 9px/1.55 Georgia, "Noto Serif SC", serif; }
+    .archive .margin-note { color: #8a293d; font: 7px/1.5 ui-monospace, monospace; }
+    .archive .input { position: absolute; right: 18px; bottom: 18px; left: 104px; display: flex; align-items: center; justify-content: space-between; border: 1px solid #829097; background: rgba(245,247,246,.94); padding: 9px 10px; color: #65747b; font-size: 8px; }
+    .archive .send { width: 23px; height: 23px; border: 0; background: #8a293d; color: white; font-size: 11px; }
+
+    /* B — computational lab */
+    .lab { background: #f1f3f7; font-family: "Arial Narrow", "Noto Sans SC", sans-serif; }
+    .lab .app { height: 100%; display: grid; grid-template-rows: 48px 1fr; }
+    .lab .top { display: flex; align-items: center; justify-content: space-between; padding: 0 16px; border-bottom: 1px solid #b9c2cb; background: #f7f9fc; }
+    .lab .brand { color: #10223a; font: 800 11px/1 ui-monospace, monospace; letter-spacing: -.03em; }
+    .lab .status { display: flex; gap: 5px; align-items: center; color: #5e6875; font-size: 7px; }
+    .lab .dot { width: 6px; height: 6px; border-radius: 50%; background: #d7f26c; box-shadow: 0 0 0 2px #10223a; }
+    .lab .work { display: grid; grid-template-columns: 1fr 92px; min-height: 0; }
+    .lab .canvas { position: relative; padding: 22px 17px; background-image: linear-gradient(#dce1e8 1px, transparent 1px), linear-gradient(90deg,#dce1e8 1px,transparent 1px); background-size: 18px 18px; }
+    .lab .eyebrow { display: inline-block; background: #10223a; color: #fff; padding: 5px 7px; font: 700 7px/1 ui-monospace, monospace; letter-spacing: .12em; }
+    .lab h3 { max-width: 270px; margin: 10px 0 8px; color: #10223a; font: 800 25px/.98 "Arial Narrow", "Noto Sans SC", sans-serif; letter-spacing: -.045em; }
+    .lab .deck { max-width: 250px; margin: 0; color: #4f5e6c; font-size: 8px; line-height: 1.5; }
+    .lab .trace { position: relative; height: 112px; margin-top: 20px; background: rgba(255,255,255,.62); border: 1px solid #bdc5cf; }
+    .lab .trace-line { position: absolute; top: 53px; right: 18px; left: 18px; height: 2px; background: #244bd4; }
+    .lab .node { position: absolute; top: 43px; width: 20px; height: 20px; border: 3px solid #244bd4; border-radius: 50%; background: #f1f3f7; }
+    .lab .n1 { left: 16px; } .lab .n2 { left: 45%; } .lab .n3 { right: 16px; background: #d7f26c; }
+    .lab .trace-label { position: absolute; top: 73px; color: #33475b; font: 7px/1.2 ui-monospace, monospace; }
+    .lab .tl1 { left: 8px; } .lab .tl2 { left: 39%; } .lab .tl3 { right: 7px; }
+    .lab .input { display: flex; align-items: center; justify-content: space-between; margin-top: 15px; border: 2px solid #10223a; background: white; padding: 9px; color: #66727e; font-size: 8px; box-shadow: 5px 5px 0 #d7f26c; }
+    .lab .send { background: #244bd4; color: #fff; padding: 5px 8px; font: 700 7px/1 ui-monospace, monospace; }
+    .lab .rail { border-left: 1px solid #bdc5cf; background: #e7ebf0; padding: 17px 9px; }
+    .lab .rail-title { color: #6b7480; font: 700 7px/1.2 ui-monospace, monospace; letter-spacing: .1em; }
+    .lab .metric { margin-top: 17px; padding-bottom: 12px; border-bottom: 1px solid #c7ced5; }
+    .lab .metric strong { display: block; color: #10223a; font: 800 18px/1 "Arial Narrow", sans-serif; }
+    .lab .metric span { color: #68747f; font-size: 7px; }
+
+    /* C — oriental journal */
+    .journal { background: #f2eee4; font-family: "Noto Serif SC", SimSun, serif; }
+    .journal .app { position: relative; height: 100%; padding: 20px; background-image: radial-gradient(rgba(66,58,44,.08) .5px, transparent .5px); background-size: 5px 5px; }
+    .journal .mast { display: grid; grid-template-columns: 1fr auto; align-items: end; padding-bottom: 10px; border-bottom: 3px double #25231f; }
+    .journal .issue { color: #817765; font: 8px/1.3 ui-monospace, monospace; letter-spacing: .08em; }
+    .journal .name { margin-top: 4px; color: #25231f; font: 700 22px/1 SimSun, "Noto Serif SC", serif; letter-spacing: .22em; }
+    .journal .stamp { display: grid; place-items: center; width: 34px; height: 34px; border: 2px solid #a43a32; color: #a43a32; font: 700 8px/1.2 SimSun, serif; transform: rotate(-3deg); }
+    .journal .body { display: grid; grid-template-columns: 42px 1fr; gap: 14px; margin-top: 14px; }
+    .journal .toc { border-right: 1px solid #b8ad9a; color: #796e5c; font-size: 8px; line-height: 2.1; writing-mode: vertical-rl; letter-spacing: .12em; }
+    .journal h3 { margin: 0; color: #2b2822; font: 700 20px/1.35 SimSun, "Noto Serif SC", serif; }
+    .journal .deck { margin: 8px 0 13px; color: #756a59; font-size: 8px; line-height: 1.65; }
+    .journal .abstract { padding: 11px 0; border-top: 1px solid #302d27; border-bottom: 1px solid #b8ad9a; }
+    .journal .abstract-label { color: #a43a32; font-size: 8px; letter-spacing: .18em; }
+    .journal .abstract p { margin: 6px 0 0; color: #514a3f; font-size: 9px; line-height: 1.75; text-align: justify; }
+    .journal .refs { display: grid; grid-template-columns: repeat(2, 1fr); gap: 9px; margin-top: 11px; }
+    .journal .ref { min-height: 50px; padding-left: 7px; border-left: 2px solid #a43a32; color: #665d50; font-size: 7px; line-height: 1.55; }
+    .journal .ask { position: absolute; right: 20px; bottom: 18px; left: 76px; display: flex; align-items: center; justify-content: space-between; border-bottom: 1px solid #25231f; padding: 7px 0; color: #8b806e; font-size: 8px; }
+    .journal .arrow { color: #a43a32; font-size: 18px; }
+
+    .footer { margin-top: 16px; color: #68737b; font-size: 12px; line-height: 1.5; text-align: center; }
+    @media (max-width: 1050px) { .grid { grid-template-columns: 1fr; } .preview { height: 390px; } .meta { min-height: auto; } }
+    @media (max-width: 640px) { .page { padding: 18px 12px; } .intro { display: block; } .hint { display: inline-block; margin-top: 12px; } .archive .app { grid-template-columns: 70px 1fr; } .archive .input { left: 88px; } }
+    @media (prefers-reduced-motion: reduce) { .option { transition: none; } }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <div class="intro">
+      <div>
+        <p class="intro-label">RAGENT · VISUAL DIRECTION 01</p>
+        <h1>哪一种更像你心中的“学术风格”？</h1>
+        <p>三种方向都会覆盖登录、问答与后台；区别在于它们如何表达可信度、研究过程和知识来源。</p>
+      </div>
+      <div class="hint">点击任一方案完成选择</div>
+    </div>
+
+    <section class="grid" aria-label="学术视觉方向">
+      <button class="option" type="button" data-choice="a" onclick="toggleSelect(this)">
+        <span class="choice">A</span>
+        <div class="preview archive">
+          <div class="app">
+            <aside class="side">
+              <div class="seal">R</div>
+              <div class="nav active">研究问答<br>RESEARCH</div>
+              <div class="nav">知识文献<br>ARCHIVE</div>
+              <div class="nav">证据追踪<br>CITATION</div>
+              <div class="nav">系统管理<br>ADMIN</div>
+            </aside>
+            <div class="main">
+              <div class="edition">RESEARCH DOSSIER · VOL. 06</div>
+              <h3>从知识中，<br>提炼可核验的结论。</h3>
+              <p class="deck">以文献索引、证据边注和检索路径组织每一次回答。</p>
+              <div class="query">“请梳理企业知识库中混合检索与重排序的主要作用。”</div>
+              <div class="sources">
+                <div>
+                  <div class="source"><small>[ 01 ] RETRIEVAL</small><p>混合检索结合稠密向量与关键词召回，在概念相似性与精确术语之间取得平衡。</p></div>
+                  <div class="source"><small>[ 02 ] RERANKING</small><p>重排序模型对候选证据进行二次判断，提高最终上下文的相关度。</p></div>
+                </div>
+                <div class="margin-note">证据来源<br>可展开<br><br>置信度<br>0.92</div>
+              </div>
+            </div>
+            <div class="input"><span>继续追问研究问题…</span><span class="send">↗</span></div>
+          </div>
+        </div>
+        <div class="meta">
+          <div class="meta-top"><h2>研究档案 · Evidence Archive</h2><span class="meta-tag">推荐</span></div>
+          <p>冷调纸张、牛津蓝与酒红批注。最强调“答案有据可查”，适合 RAG 产品的学术可信感。</p>
+          <div class="tokens"><span class="token"><i class="swatch" style="background:#142a38"></i>牛津蓝</span><span class="token"><i class="swatch" style="background:#8a293d"></i>批注红</span><span class="token">衬线标题</span><span class="token">边注式引用</span></div>
+        </div>
+      </button>
+
+      <button class="option" type="button" data-choice="b" onclick="toggleSelect(this)">
+        <span class="choice">B</span>
+        <div class="preview lab">
+          <div class="app">
+            <header class="top"><div class="brand">RAGENT / COMPUTE</div><div class="status"><span class="dot"></span>KNOWLEDGE INDEX ONLINE</div></header>
+            <div class="work">
+              <div class="canvas">
+                <span class="eyebrow">COMPUTATIONAL RESEARCH</span>
+                <h3>让推理过程<br>成为可观察对象</h3>
+                <p class="deck">面向 AI、工程和数据团队的现代计算研究界面。</p>
+                <div class="trace">
+                  <div class="trace-line"></div><span class="node n1"></span><span class="node n2"></span><span class="node n3"></span>
+                  <span class="trace-label tl1">QUERY</span><span class="trace-label tl2">RETRIEVE</span><span class="trace-label tl3">ANSWER</span>
+                </div>
+                <div class="input"><span>输入需要验证的研究问题</span><span class="send">RUN ↗</span></div>
+              </div>
+              <aside class="rail">
+                <div class="rail-title">LIVE TRACE</div>
+                <div class="metric"><strong>24</strong><span>候选片段</span></div>
+                <div class="metric"><strong>6</strong><span>引用证据</span></div>
+                <div class="metric"><strong>1.8s</strong><span>检索耗时</span></div>
+              </aside>
+            </div>
+          </div>
+        </div>
+        <div class="meta">
+          <div class="meta-top"><h2>计算实验室 · Computational Lab</h2><span class="meta-tag">前沿</span></div>
+          <p>高饱和蓝、荧光黄绿与技术网格。突出检索链路和运行状态，更像 AI 研究工具。</p>
+          <div class="tokens"><span class="token"><i class="swatch" style="background:#244bd4"></i>计算蓝</span><span class="token"><i class="swatch" style="background:#d7f26c"></i>实验荧光</span><span class="token">窄体无衬线</span><span class="token">可视化链路</span></div>
+        </div>
+      </button>
+
+      <button class="option" type="button" data-choice="c" onclick="toggleSelect(this)">
+        <span class="choice">C</span>
+        <div class="preview journal">
+          <div class="app">
+            <header class="mast">
+              <div><div class="issue">知识工程学刊 · 2026 / 第 07 期</div><div class="name">问知</div></div>
+              <div class="stamp">可信<br>知识</div>
+            </header>
+            <div class="body">
+              <aside class="toc">问答　文献　意图　追踪　管理</aside>
+              <div>
+                <h3>以严谨的知识组织，<br>回应每一个问题。</h3>
+                <p class="deck">面向中文知识场景的人文社科式研究体验。</p>
+                <section class="abstract"><span class="abstract-label">摘要</span><p>系统从授权知识库中检索相关材料，重组为结构清晰的答案，并保留引用依据与检索轨迹。</p></section>
+                <div class="refs"><div class="ref">〔一〕知识切片与语义索引<br>文献条目 · 可追溯</div><div class="ref">〔二〕意图识别与术语映射<br>研究条目 · 可核验</div></div>
+              </div>
+            </div>
+            <div class="ask"><span>在此写下你的问题</span><span class="arrow">→</span></div>
+          </div>
+        </div>
+        <div class="meta">
+          <div class="meta-top"><h2>东方学刊 · Eastern Journal</h2><span class="meta-tag">人文</span></div>
+          <p>宋体、宣纸纹理与朱砂印记。中文学术气质最强，适合强调文献传统与知识沉淀。</p>
+          <div class="tokens"><span class="token"><i class="swatch" style="background:#292721"></i>墨黑</span><span class="token"><i class="swatch" style="background:#a43a32"></i>朱砂</span><span class="token">宋体标题</span><span class="token">学刊编排</span></div>
+        </div>
+      </button>
+    </section>
+    <p class="footer">选择的是整体气质，不会照搬缩略图；最终会按现有功能与响应式布局落地。</p>
+  </main>
+</body>
+</html>
